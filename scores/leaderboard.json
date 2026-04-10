@@ -1,0 +1,50 @@
+{
+  "last_updated": "2025-01-01T00:00:00Z",
+  "baseline_time": 10.0,
+  "entries": [
+    {
+      "username": "test_user",
+      "display_name": "Test User",
+      "median_time_seconds": 4.0,
+      "speedup": "2.50",
+      "status": "valid",
+      "merged_at": "2025-01-01T12:00:00Z",
+      "num_runs": 5,
+      "pr_number": 1,
+      "pr_url": "https://github.com/example/repo/pull/1"
+    },
+    {
+      "username": "test_user_2",
+      "display_name": "Test User",
+      "median_time_seconds": 4.0,
+      "speedup": "2.50",
+      "status": "valid",
+      "merged_at": "2025-01-01T12:00:00Z",
+      "num_runs": 5,
+      "pr_number": 1,
+      "pr_url": "https://github.com/example/repo/pull/1"
+    },
+    {
+      "username": "test_user_3",
+      "display_name": "Test User",
+      "median_time_seconds": 4.0,
+      "speedup": "2.50",
+      "status": "valid",
+      "merged_at": "2025-01-01T12:00:00Z",
+      "num_runs": 5,
+      "pr_number": 1,
+      "pr_url": "https://github.com/example/repo/pull/1"
+    },
+    {
+      "username": "test_user_4",
+      "display_name": "Test User",
+      "median_time_seconds": 4.0,
+      "speedup": "2.50",
+      "status": "valid",
+      "merged_at": "2025-01-01T12:00:00Z",
+      "num_runs": 5,
+      "pr_number": 1,
+      "pr_url": "https://github.com/example/repo/pull/1"
+    }
+  ]
+}

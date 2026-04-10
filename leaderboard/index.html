@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PyCon FT Challenge Leaderboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="hero">
+      <div class="branding">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" class="meta-logo">
+            <path d="M50 74.5c-7.13 0-13.1-4.07-19.1-12.57L28.44 58C21.54 47.32 17.5 37.92 17.5 31.5c0-9.77 5.6-16 13.5-16 8.1 0 13 5.7 19 16.22C56.63 21.08 61.85 15.5 69 15.5c7.9 0 13.5 6.23 13.5 16 0 6.42-4.04 15.82-10.94 26.5l-2.46 3.93C63.1 70.43 57.13 74.5 50 74.5ZM31 23.5c-3.82 0-6.5 3.14-6.5 8 0 4.58 3.36 12.58 9.38 21.78l2.46 3.93C41.2 64.63 45.18 67.5 50 67.5s8.8-2.87 13.66-10.29l2.46-3.93C72.14 44.08 75.5 36.08 75.5 31.5c0-4.86-2.68-8-6.5-8-4.74 0-8.64 4.34-14.65 14.75L50 46.1l-4.35-7.85C39.64 27.84 35.74 23.5 31 23.5Z" fill="currentColor"/>
+          </svg>
+        </div>
+        <div>
+          <p class="eyebrow">PyCon 2026 Meta Booth</p>
+          <h1>Free-Threaded Python Challenge</h1>
+        </div>
+      </div>
+    </header>
+
+    <section class="info-panel">
+      <div class="board-card">
+        <h3>🐍 Take the Challenge</h3>
+        <p>Write the fastest free-threaded Python build scheduler. Top 25 finishers each day win swag!</p>
+        <a class="cta-link" href="https://github.com/meta/pycon26-ft-challenge" target="_blank" rel="noreferrer">github.com/meta/pycon26-ft-challenge</a>
+      </div>
+      <div class="board-card">
+        <h3>🏆 Prizes &amp; Lightning Talks</h3>
+        <p>Swag pickup: <strong>5:45pm Friday and Saturday</strong> at the Meta booth.</p>
+        <p>Winners are invited to give a short talk about their approach!</p>
+      </div>
+    </section>
+
+    <section class="board-card">
+      <div class="board-header">
+        <div>
+          <h2>Leaderboard</h2>
+          <p class="board-subtitle"> <span id="last-updated" class="refresh-status"></span></p>
+        </div>
+        <p id="status-message" class="status-message" role="status" aria-live="polite"></p>
+      </div>
+
+      <div id="error-banner" class="error-banner" role="alert" hidden></div>
+
+      <div class="table-wrap">
+        <table id="leaderboard-table" class="leaderboard-table">
+          <thead>
+            <tr>
+              <th scope="col"><button type="button" class="sort-button" data-sort-key="rank">Rank</button></th>
+              <th scope="col"><button type="button" class="sort-button" data-sort-key="username">Username</button></th>
+              <th scope="col"><button type="button" class="sort-button" data-sort-key="speedup">Speedup</button></th>
+              <th scope="col"><button type="button" class="sort-button" data-sort-key="merged_at">Submitted At</button></th>
+            </tr>
+          </thead>
+          <tbody id="leaderboard-body"></tbody>
+        </table>
+
+        <div id="empty-state" class="empty-state" hidden>
+          <h3>No submissions yet. Be the first!</h3>
+          <p>Once benchmark results land in the leaderboard feed, standings will appear here automatically.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
