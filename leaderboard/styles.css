@@ -1,19 +1,19 @@
 :root {
-  --bg-color: #0a0e1a;
-  --panel-color: rgba(14, 22, 40, 0.92);
-  --panel-strong: rgba(18, 30, 55, 0.96);
-  --primary-color: #0081FB;
-  --primary-strong: #58a6ff;
-  --accent-color: #0668E1;
-  --text-color: #f0f4fa;
-  --muted-text: #8ea4be;
-  --border-color: rgba(0, 129, 251, 0.16);
-  --danger-color: #ff6b6b;
-  --success-color: #4de6a2;
-  --shadow-color: rgba(0, 0, 0, 0.42);
-  --gold: #ffd166;
-  --silver: #dfe7f1;
-  --bronze: #ff9f68;
+  --bg-color: #e8dff0;
+  --panel-color: rgba(255, 255, 255, 0.55);
+  --panel-strong: rgba(255, 255, 255, 0.7);
+  --primary-color:  #4a86e8;
+  --primary-strong: #4a86e8;
+  --accent-color: #4a86e8;
+  --text-color: #1a2332;
+  --muted-text: #5e6d80;
+  --border-color: rgba(0, 0, 0, 0.08);
+  --danger-color: #d94452;
+  --success-color: #2a9d6a;
+  --shadow-color: rgba(0, 0, 0, 0.08);
+  --gold: #f0c040;
+  --silver: #a8b8cc;
+  --bronze: #d48a4c;
 }
 
 * {
@@ -34,9 +34,9 @@ body {
   font-family: "Space Grotesk", sans-serif;
   color: var(--text-color);
   background:
-    radial-gradient(circle at top left, rgba(0, 129, 251, 0.15), transparent 30%),
-    radial-gradient(circle at 85% 12%, rgba(6, 104, 225, 0.12), transparent 24%),
-    linear-gradient(135deg, #060a16 0%, #0a0e1a 45%, #0c1225 100%);
+    radial-gradient(circle at 10% 30%, rgba(232, 200, 240, 0.6), transparent 40%),
+    radial-gradient(circle at 90% 20%, rgba(180, 230, 210, 0.5), transparent 40%),
+    linear-gradient(135deg, #e4d4ee 0%, #d6e4ef 40%, #c8eee0 100%);
 }
 
 button,
@@ -64,20 +64,17 @@ table {
 }
 
 .brand-mark {
+  margin-top: 0.3rem;
   display: grid;
   place-items: center;
   width: clamp(3.5rem, 6vw, 4.5rem);
   aspect-ratio: 1;
-  border-radius: 1.1rem;
-  background: linear-gradient(145deg, rgba(0, 129, 251, 0.25), rgba(6, 104, 225, 0.18));
-  border: 1px solid rgba(0, 129, 251, 0.2);
-  box-shadow: 0 16px 36px var(--shadow-color);
-  color: var(--primary-strong);
 }
 
 .meta-logo {
-  width: 60%;
-  height: 60%;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .eyebrow {
@@ -121,7 +118,7 @@ h2 {
 }
 
 .info-col + .info-col {
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
 }
 
 .info-col h3 {
@@ -146,7 +143,7 @@ h2 {
   padding: 0.4rem 0.9rem;
   border-radius: 0.5rem;
   background: var(--primary-color);
-  color: #08111f;
+  color: #fff;
   font-weight: 700;
   font-size: 0.82rem;
   text-decoration: none;
@@ -197,22 +194,22 @@ h2 {
   margin-bottom: 1rem;
   padding: 0.85rem 1rem;
   border-radius: 0.95rem;
-  background: rgba(255, 107, 107, 0.12);
-  border: 1px solid rgba(255, 107, 107, 0.35);
-  color: #ffd9d9;
+  background: rgba(217, 68, 82, 0.1);
+  border: 1px solid rgba(217, 68, 82, 0.3);
+  color: #8b2030;
 }
 
 .table-wrap {
   overflow: hidden;
   border-radius: 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.08);
 }
 
 .leaderboard-table {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  background: rgba(4, 10, 20, 0.6);
+  background: rgba(255, 255, 255, 0.45);
 }
 
 .leaderboard-table th,
@@ -222,7 +219,7 @@ h2 {
 }
 
 .leaderboard-table thead {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(0, 0, 0, 0.03);
 }
 
 .leaderboard-table tbody tr {
@@ -230,15 +227,20 @@ h2 {
 }
 
 .leaderboard-table tbody tr:nth-child(odd) {
-  background: rgba(255, 255, 255, 0.015);
+  background: rgba(0, 0, 0, 0.02);
 }
 
 .leaderboard-table tbody tr:hover {
-  background: rgba(0, 129, 251, 0.08);
+  background: rgba(74, 111, 165, 0.08);
 }
 
 .leaderboard-table tbody tr + tr td {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.pr-cell {
+  display: flex;
+  flex-direction: row;
 }
 
 .sort-button {
@@ -285,21 +287,21 @@ h2 {
   height: 1.9rem;
   border-radius: 999px;
   font-size: 1rem;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.06);
 }
 
 .trophy.gold {
-  color: #342100;
+  color: #4a3000;
   background: var(--gold);
 }
 
 .trophy.silver {
-  color: #223246;
+  color: #2a3a50;
   background: var(--silver);
 }
 
 .trophy.bronze {
-  color: #3f1c00;
+  color: #4a2800;
   background: var(--bronze);
 }
 
@@ -319,6 +321,21 @@ h2 {
   margin-top: 0.2rem;
   color: var(--muted-text);
   font-size: 0.82rem;
+}
+
+.meta-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.35rem;
+  background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(74, 111, 165, 0.25);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  vertical-align: middle;
+  line-height: 1.5;
 }
 
 .mono {
@@ -347,7 +364,7 @@ h2 {
   min-height: 18rem;
   padding: 2rem;
   text-align: center;
-  background: rgba(4, 10, 20, 0.75);
+  background: rgba(255, 255, 255, 0.35);
 }
 
 .empty-state p {
@@ -401,7 +418,7 @@ h2 {
 
   .info-col + .info-col {
     border-left: none;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
   }
 
   .board-card {

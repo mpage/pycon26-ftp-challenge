@@ -41,6 +41,7 @@ function normaliseEntries(entries) {
         ? Number.parseFloat(entry.speedup)
         : null,
       numRuns: entry.num_runs ?? null,
+      isMeta: entry.is_meta === true,
     }));
 }
 
@@ -201,7 +202,10 @@ function renderRows(sortedEntries) {
         </div>
       </td>
       <td>
+      <div class="pr-cell">
         <a class="username-link" href="${entry.prUrl}" target="_blank" rel="noreferrer">${entry.username}</a>
+        ${entry.isMeta ? '<span class="meta-badge" title="Meta employee">META</span>' : ""}
+      </div>
         ${entry.displayName ? `<span class="display-name">${entry.displayName}</span>` : ""}
       </td>
       <td class="mono">${formatSpeedup(entry)}</td>

@@ -29,6 +29,7 @@ jobs:
       status: ${{ steps.run_harness.outputs.status }}
       pr_number: ${{ steps.pr_info.outputs.pr_number }}
       pr_url: ${{ steps.pr_info.outputs.pr_url }}
+      is_meta: ${{ steps.pr_info.outputs.is_meta }}
 
     steps:
       - name: Check out repository
@@ -139,6 +140,9 @@ jobs:
             const pr = (resp.data || []).find(p => p.merged_at) || resp.data?.[0];
             core.setOutput("pr_number", pr ? String(pr.number) : "");
             core.setOutput("pr_url", pr?.html_url || "");
+            const body = pr?.body || "";
+            const isMeta = /- \[x\] I am a Meta employee/i.test(body);
+            core.setOutput("is_meta", String(isMeta));
 
       - name: Post score comment on PR
         if: github.event_name == 'pull_request'
@@ -231,6 +235,7 @@ jobs:
           STATUS: ${{ needs.score.outputs.status }}
           PR_NUMBER: ${{ needs.score.outputs.pr_number }}
           PR_URL: ${{ needs.score.outputs.pr_url }}
+          IS_META: ${{ needs.score.outputs.is_meta }}
         run: |
           set -euo pipefail
 
@@ -255,6 +260,7 @@ jobs:
           status = os.environ["STATUS"]
           pr_number = os.environ.get("PR_NUMBER", "")
           pr_url = os.environ.get("PR_URL", "")
+          is_meta = os.environ.get("IS_META", "false").lower() == "true"
 
           speedup_value = float(speedup_raw)
           now = datetime.now(timezone.utc).isoformat()
@@ -267,6 +273,7 @@ jobs:
               "merged_at": now,
               "speedup": f"{speedup_value:.2f}",
               "status": status,
+              "is_meta": is_meta,
           }
 
           if leaderboard_path.exists():
