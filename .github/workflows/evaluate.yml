@@ -53,10 +53,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python 3.14t
-        uses: deadsnakes/action@v3.2.0
+        uses: actions/setup-python@v6
         with:
-          python-version: "3.14"
-          nogil: true
+          python-version: "3.14t"
 
       - name: Evaluate submission
         run: python challenge/harness.py submissions/${{ env.PR_AUTHOR }}.py graphs
