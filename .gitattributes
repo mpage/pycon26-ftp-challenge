@@ -1,0 +1,2 @@
+# The journal is append-only; always take both changes
+scores/journal.txt merge=union

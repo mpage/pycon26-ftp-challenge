@@ -1,54 +1,23 @@
 name: Evaluate Submission
 
 on:
-  pull_request:
+  workflow_run:
+    workflows: ["Validate Submission"]
     types:
-      - opened
-      - synchronize
+      - completed
 
 permissions:
-  contents: read
+  contents: read, write
   pull-requests: read
 
 jobs:
-  evaluate:
-    runs-on: ubuntu-latest
+  run_harness:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: self-hosted
+    outputs:
+        results: ${{ steps.run_harness.outputs.results }}
 
     steps:
-      - name: Validate changed files
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const prAuthor = context.payload.pull_request.user.login;
-            const expectedFile = `submissions/${prAuthor}.py`;
-
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-              per_page: 100,
-            });
-
-            const changedFiles = files.map((f) => f.filename);
-
-            if (changedFiles.length !== 1) {
-              core.setFailed(
-                `PR must modify exactly one file (${expectedFile}), but it modifies ${changedFiles.length}: ${changedFiles.join(", ")}`,
-              );
-              return;
-            }
-
-            if (changedFiles[0] !== expectedFile) {
-              core.setFailed(
-                `PR must only modify ${expectedFile}, but it modifies ${changedFiles[0]}`,
-              );
-              return;
-            }
-
-            core.info(`PR correctly modifies only ${expectedFile}`);
-            core.exportVariable('PR_AUTHOR', prAuthor);
-
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -57,5 +26,31 @@ jobs:
         with:
           python-version: "3.14t"
 
-      - name: Evaluate submission
-        run: python challenge/harness.py submissions/${{ env.PR_AUTHOR }}.py graphs
+      - name: Run Harness
+        id: run_harness
+        run: |
+          python challenge/harness.py --num-trials 3 --json submissions/${{ env.PR_AUTHOR }}.py graphs | tee ${{ runner.temp }}/results.txt
+          DATA=$(cat ${{ runner.temp }}/results.txt | jq -c .)
+          echo "results=$DATA" >> "$GITHUB_OUTPUT"
+
+  update_journal:
+    needs: evalute
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        ref: main
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - run: |
+          echo "${{ needs.run_harness.outputs.results }}" > ${{ runner.temp }}/results.txt
+          python scores/format_journal_entry.py ${{ github.event.workflow_run.jobs.evaluate.outputs.pr_author }} ${{ github.event.workflow_run.jobs.evaluate.outputs.pr_url }} ${{ github.event.workflow_run.jobs.evaluate.outputs.pr_number }} ${{ runner.temp }}/results.txt >> scores/journal.txt
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add scores/journal.txt
+          git commit -m "Log submission result from ${{ github.event.workflow_run.jobs.evaluate.pr_author }}"
+          git push

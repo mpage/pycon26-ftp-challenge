@@ -8,23 +8,25 @@ on:
 
 permissions:
   contents: read
-  issues: write
-  pull-requests: write
+  pull-requests: read
 
 jobs:
-  validate:
+  evaluate:
     runs-on: ubuntu-latest
+    outputs:
+        pr_number: ${{ github.event.pull_request.number }}
+        pr_url: ${{ github.event.pull_request.html_url  }}
+        pr_author: ${{ github.event.pull_request.user.login }}
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Detect added submission
-        id: detect
+      - name: Validate changed files
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const prAuthor = context.payload.pull_request.user.login;
+            const expectedFile = `submissions/${prAuthor}.py`;
+
             const files = await github.paginate(github.rest.pulls.listFiles, {
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -32,266 +34,21 @@ jobs:
               per_page: 100,
             });
 
-            const addedSubmissionFiles = files.filter((file) =>
-              file.status === "added" &&
-              file.filename.startsWith("submissions/") &&
-              file.filename.endsWith(".py")
-            );
+            const changedFiles = files.map((f) => f.filename);
 
-            const submissionPath = addedSubmissionFiles.length === 1 ? addedSubmissionFiles[0].filename : "";
-            core.setOutput("added_count", String(addedSubmissionFiles.length));
-            core.setOutput("submission_path", submissionPath);
-            core.setOutput(
-              "added_paths",
-              addedSubmissionFiles.map((file) => file.filename).join("\n"),
-            );
-
-      - name: Install free-threaded Python 3.13t
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y software-properties-common
-          sudo add-apt-repository -y ppa:deadsnakes/ppa
-          sudo apt-get update
-          sudo apt-get install -y python3.13t
-
-          mkdir -p "$RUNNER_TEMP/py313t-bin"
-          ln -sf /usr/bin/python3.13t "$RUNNER_TEMP/py313t-bin/python3"
-          ln -sf /usr/bin/python3.13t "$RUNNER_TEMP/py313t-bin/python"
-          echo "$RUNNER_TEMP/py313t-bin" >> "$GITHUB_PATH"
-
-      - name: Run validation checks
-        id: validate
-        shell: bash
-        env:
-          ADDED_COUNT: ${{ steps.detect.outputs.added_count }}
-          SUBMISSION_PATH: ${{ steps.detect.outputs.submission_path }}
-          ADDED_PATHS: ${{ steps.detect.outputs.added_paths }}
-        run: |
-          set -uo pipefail
-
-          comment_file="$RUNNER_TEMP/validation-comment.md"
-          result_file="$RUNNER_TEMP/validation-result.json"
-
-          pass=true
-          one_file_status="pass"
-          one_file_detail="Exactly one added submission file detected."
-          naming_status="pass"
-          naming_detail="Submission filename matches the PR author's GitHub username."
-          syntax_status="pass"
-          syntax_detail="Syntax check passed."
-          import_status="pass"
-          import_detail="Module import succeeded."
-          benchmark_status="pass"
-          benchmark_detail="Single benchmark iteration matched the expected output."
-          syntax_log=""
-          import_log=""
-          benchmark_log=""
-
-          if [[ "$ADDED_COUNT" != "1" ]]; then
-            pass=false
-            one_file_status="fail"
-            one_file_detail="Expected exactly one added file in submissions/, found ${ADDED_COUNT:-0}."
-          fi
-
-          if [[ -n "${ADDED_PATHS:-}" ]]; then
-            one_file_detail="$one_file_detail Added file(s): ${ADDED_PATHS//$'\n'/, }"
-          fi
-
-          if [[ -z "${SUBMISSION_PATH:-}" ]]; then
-            pass=false
-            naming_status="fail"
-            naming_detail="No unique added submission file was available to validate."
-            syntax_status="fail"
-            syntax_detail="Skipped because the submission file could not be identified."
-            import_status="fail"
-            import_detail="Skipped because the submission file could not be identified."
-            benchmark_status="fail"
-            benchmark_detail="Skipped because the submission file could not be identified."
-          else
-            submission_filename="$(basename "$SUBMISSION_PATH")"
-            if [[ ! "$submission_filename" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}\.py$ ]]; then
-              pass=false
-              naming_status="fail"
-              naming_detail="Expected a filename matching \`<github_username>.py\`, found \`$submission_filename\`."
-            fi
-
-            if ! python3 -m py_compile "$SUBMISSION_PATH" >"$RUNNER_TEMP/py_compile.stdout" 2>"$RUNNER_TEMP/py_compile.stderr"; then
-              pass=false
-              syntax_status="fail"
-              syntax_detail="Syntax check failed."
-              syntax_log="$(cat "$RUNNER_TEMP/py_compile.stderr")"
-            fi
-
-            if [[ "$syntax_status" == "pass" ]]; then
-              if ! python3 - "$SUBMISSION_PATH" >"$RUNNER_TEMP/import.stdout" 2>"$RUNNER_TEMP/import.stderr" <<'PY'
-          import importlib.util
-          import sys
-          from pathlib import Path
-
-          submission_path = Path(sys.argv[1]).resolve()
-          module_name = f"_validate_{submission_path.stem}"
-          spec = importlib.util.spec_from_file_location(module_name, submission_path)
-          if spec is None or spec.loader is None:
-              raise ImportError(f"Could not create a module spec for {submission_path}")
-
-          module = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(module)
-          if not hasattr(module, "solve"):
-              raise AttributeError("Submission module must define solve(input_data)")
-          print("import-ok")
-          PY
-              then
-                pass=false
-                import_status="fail"
-                import_detail="Quick import test failed."
-                import_log="$(cat "$RUNNER_TEMP/import.stderr")"
-              fi
-            else
-              pass=false
-              import_status="fail"
-              import_detail="Skipped because syntax validation failed."
-            fi
-
-            if [[ "$import_status" == "pass" ]]; then
-              mkdir -p "$RUNNER_TEMP/config-shim"
-              cat > "$RUNNER_TEMP/config-shim/config.py" <<'PY'
-          NUM_RUNS = 1
-          TIMEOUT_SECONDS = 300
-          PYTHON_VERSION = "3.13t"
-          ROUND_PRECISION = 2
-          BASELINE_TIME = 1.0
-          PY
-
-              if ! PYTHONPATH="$RUNNER_TEMP/config-shim:$PWD/benchmark${PYTHONPATH:+:$PYTHONPATH}" \
-                python3 -m benchmark.runner "$SUBMISSION_PATH" >"$result_file" 2>"$RUNNER_TEMP/benchmark.stderr"; then
-                pass=false
-                benchmark_status="fail"
-                benchmark_detail="Single benchmark iteration failed to execute."
-                benchmark_log="$(cat "$RUNNER_TEMP/benchmark.stderr")"
-              else
-                if ! python3 - "$result_file" <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          result = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          if result.get("error"):
-              raise SystemExit(f"Benchmark error: {result['error']}")
-          if not result.get("output_valid"):
-              raise SystemExit("Benchmark output did not match challenge/expected_output.json")
-          if len(result.get("times", [])) != 1:
-              raise SystemExit(f"Expected exactly one timing sample, saw {len(result.get('times', []))}")
-          print("benchmark-ok")
-          PY
-                then
-                  pass=false
-                  benchmark_status="fail"
-                  benchmark_detail="Single benchmark iteration did not produce a valid result."
-                  benchmark_log="$(cat "$result_file")"
-                fi
-              fi
-            else
-              pass=false
-              benchmark_status="fail"
-              benchmark_detail="Skipped because the quick import test failed."
-            fi
-          fi
-
-          conclusion="PASS"
-          heading="## Validation passed"
-          if [[ "$pass" != "true" ]]; then
-            conclusion="FAIL"
-            heading="## Validation failed"
-          fi
-
-          {
-            printf '%s\n' '<!-- pycon26-ft-validate -->'
-            printf '%s\n\n' "$heading"
-            printf -- '- Submission: `%s`\n' "${SUBMISSION_PATH:-not detected}"
-            printf -- '- Exactly one added file in `submissions/`: %s. %s\n' "$one_file_status" "$one_file_detail"
-            printf -- '- Filename check: %s. %s\n' "$naming_status" "$naming_detail"
-            printf -- '- Syntax check (`python3 -m py_compile`): %s. %s\n' "$syntax_status" "$syntax_detail"
-            printf -- '- Quick import test: %s. %s\n' "$import_status" "$import_detail"
-            printf -- '- One benchmark iteration: %s. %s\n' "$benchmark_status" "$benchmark_detail"
-
-            if [[ -n "$syntax_log" ]]; then
-              printf '\n### Syntax output\n\n```\n%s\n```\n' "$syntax_log"
-            fi
-            if [[ -n "$import_log" ]]; then
-              printf '\n### Import output\n\n```\n%s\n```\n' "$import_log"
-            fi
-            if [[ -n "$benchmark_log" ]]; then
-              printf '\n### Benchmark output\n\n```\n%s\n```\n' "$benchmark_log"
-            fi
-          } > "$comment_file"
-
-          {
-            echo "passed=$pass"
-            echo "conclusion=$conclusion"
-            echo "comment_file=$comment_file"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Post PR comment
-        id: pr_comment
-        if: always()
-        continue-on-error: true
-        uses: actions/github-script@v7
-        env:
-          COMMENT_FILE: ${{ steps.validate.outputs.comment_file }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require("fs");
-            const marker = "<!-- pycon26-ft-validate -->";
-            const body = fs.readFileSync(process.env.COMMENT_FILE, "utf8");
-            const issue_number = context.payload.pull_request.number;
-
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number,
-              per_page: 100,
-            });
-
-            const existing = comments.find((comment) =>
-              comment.user?.type === "Bot" &&
-              typeof comment.body === "string" &&
-              comment.body.includes(marker),
-            );
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number,
-                body,
-              });
+            if (changedFiles.length !== 1) {
+              core.setFailed(
+                `PR must modify exactly one file (${expectedFile}), but it modifies ${changedFiles.length}: ${changedFiles.join(", ")}`,
+              );
+              return;
             }
 
-      - name: Fallback to job summary if PR comment fails
-        if: always() && steps.pr_comment.outcome == 'failure'
-        shell: bash
-        env:
-          COMMENT_FILE: ${{ steps.validate.outputs.comment_file }}
-        run: |
-          {
-            echo "## PR comment fallback"
-            echo
-            cat "$COMMENT_FILE"
-          } >> "$GITHUB_STEP_SUMMARY"
+            if (changedFiles[0] !== expectedFile) {
+              core.setFailed(
+                `PR must only modify ${expectedFile}, but it modifies ${changedFiles[0]}`,
+              );
+              return;
+            }
 
-      - name: Fail workflow on validation failure
-        if: always() && steps.validate.outputs.passed != 'true'
-        shell: bash
-        run: |
-          echo "Submission validation failed." >&2
-          exit 1
+            core.info(`PR correctly modifies only ${expectedFile}`);
+            core.exportVariable('PR_AUTHOR', prAuthor);
