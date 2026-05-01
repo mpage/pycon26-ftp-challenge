@@ -34,7 +34,7 @@ jobs:
           echo "results=$DATA" >> "$GITHUB_OUTPUT"
 
   update_journal:
-    needs: evalute
+    needs: run_harness
     runs-on: ubuntu-latest
     permissions:
       contents: write
