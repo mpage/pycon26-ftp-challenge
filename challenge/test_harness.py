@@ -12,6 +12,7 @@ from graph import BuildGraph, Target
 from harness import (
     _instrument_build,
     _load_submission,
+    format_json_results,
     InstrumentedResults,
     run_one,
     validate,
@@ -263,6 +264,48 @@ class ValidationResultTest(unittest.TestCase):
     def test_passed_false_when_errors(self) -> None:
         result = ValidationResult(passed=False, errors=["some error"])
         self.assertFalse(result.passed)
+
+
+def _make_result(graph="g.json", passed=True, ref_time=1.0, sub_time=0.5) -> dict:
+    return {
+        "graph": graph,
+        "num_targets": 10,
+        "reference_time": ref_time,
+        "submission_time": sub_time,
+        "speedup": ref_time / sub_time if sub_time > 0 else float("inf"),
+        "passed": passed,
+        "errors": [] if passed else ["some error"],
+    }
+
+
+class FormatJsonResultsTest(unittest.TestCase):
+    def test_single_result_returns_flat_dict(self) -> None:
+        result = _make_result()
+        output = format_json_results([result])
+        self.assertEqual(output, result)
+
+    def test_multiple_results_returns_results_and_summary(self) -> None:
+        r1 = _make_result(graph="a.json", ref_time=2.0, sub_time=1.0)
+        r2 = _make_result(graph="b.json", ref_time=4.0, sub_time=1.0)
+        output = format_json_results([r1, r2])
+        self.assertEqual(output["results"], [r1, r2])
+        summary = output["summary"]
+        self.assertAlmostEqual(summary["total_reference_time"], 6.0)
+        self.assertAlmostEqual(summary["total_submission_time"], 2.0)
+        self.assertAlmostEqual(summary["overall_speedup"], 3.0)
+        self.assertTrue(summary["overall_passed"])
+
+    def test_summary_overall_passed_false_when_any_fail(self) -> None:
+        r1 = _make_result(graph="a.json", passed=True)
+        r2 = _make_result(graph="b.json", passed=False)
+        output = format_json_results([r1, r2])
+        self.assertFalse(output["summary"]["overall_passed"])
+
+    def test_summary_overall_passed_true_when_all_pass(self) -> None:
+        r1 = _make_result(graph="a.json", passed=True)
+        r2 = _make_result(graph="b.json", passed=True)
+        output = format_json_results([r1, r2])
+        self.assertTrue(output["summary"]["overall_passed"])
 
 
 if __name__ == "__main__":

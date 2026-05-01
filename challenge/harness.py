@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import sys
 import threading
 import time
@@ -199,6 +200,23 @@ def print_summary(results: list[dict]) -> None:
     print(f"{'=' * 60}")
 
 
+def format_json_results(results: list[dict]) -> dict:
+    """Build a JSON-serializable output dict from a list of run results."""
+    if len(results) == 1:
+        return results[0]
+    total_ref = sum(r["reference_time"] for r in results)
+    total_sub = sum(r["submission_time"] for r in results)
+    return {
+        "results": results,
+        "summary": {
+            "total_reference_time": total_ref,
+            "total_submission_time": total_sub,
+            "overall_speedup": total_ref / total_sub if total_sub > 0 else float("inf"),
+            "overall_passed": all(r["passed"] for r in results),
+        },
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run and score a build graph simulator submission"
@@ -206,6 +224,9 @@ def main():
     parser.add_argument("submission", help="Path to the submission .py file")
     parser.add_argument(
         "graph_path", help="Path to a graph JSON file or directory of graph files"
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Output results as JSON"
     )
     args = parser.parse_args()
 
@@ -227,11 +248,16 @@ def main():
     for gf in graph_files:
         graph = BuildGraph.load(str(gf))
         result = run_one(submission_module, graph, gf.name)
-        print_result(result)
+        if not args.json:
+            print_result(result)
         results.append(result)
 
-    if len(results) > 1:
-        print_summary(results)
+    if args.json:
+        json.dump(format_json_results(results), sys.stdout, indent=2)
+        print()
+    else:
+        if len(results) > 1:
+            print_summary(results)
 
     # Exit code
     if not all(r["passed"] for r in results):
