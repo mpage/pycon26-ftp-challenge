@@ -108,6 +108,8 @@ jobs:
   report_results:
     needs: run_harness
     runs-on: ubuntu-latest
+    permissions:
+      pull-request: write
     steps:
       - name: Fetch results
         id: fetch_results
@@ -122,7 +124,6 @@ jobs:
         env:
           RESULTS_FILE: ${{ runner.temp }}/results.txt
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require("fs");
             const marker = "<!-- pycon26-ft-score -->";
@@ -169,18 +170,9 @@ jobs:
               c.user?.type === "Bot" && c.body?.includes(marker)
             );
 
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number,
-                body,
-              });
-            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              body,
+            });
