@@ -43,7 +43,7 @@ likely take advantage this fact.
 
 ## Leaderboard
 
-[PLACEHOLDER: leaderboard URL]
+Visit the leaderboard [here](https://mpage.github.io/pycon26-ftp-challenge/leaderboard/).
 
 ## Evaluation
 
