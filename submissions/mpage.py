@@ -1,4 +1,4 @@
-"""Single-threaded reference implementation for the build graph simulator. 4"""
+"""Single-threaded reference implementation for the build graph simulator. 5"""
 
 from __future__ import annotations
 
