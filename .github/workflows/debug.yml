@@ -49,18 +49,10 @@ jobs:
           echo "=== Full env diff (service vs login) ==="
           env | sort
 
-      - name: Run harness bypassing uv wrapper
-        run: |
-          PYPATH=$(uv run --python 3.14.3t python -c "import sys; print(sys.executable)")
-          echo "Using: $PYPATH"
-          PYTHONPATH=challenge $PYPATH challenge/harness.py submissions/example.py graphs
+        - name: First run with perf counters
+          run: |
+            sudo perf stat -d -d uv run --python 3.14.3t challenge/harness.py submissions/example.py graphs/diamond.json 2>&1
 
-      - name: Run Harness
-        run: |
-          uv run --python 3.14.3t challenge/harness.py submissions/example.py graphs
-
-      - name: Run Harness
-        id: run_harness
-        timeout-minutes: 10
-        run: |
-          uv run --python 3.14.3t challenge/harness.py submissions/example.py graphs
+        - name: Second run with perf counters
+          run: |
+            sudo perf stat -d -d uv run --python 3.14.3t challenge/harness.py submissions/example.py graphs/diamond.json 2>&1
