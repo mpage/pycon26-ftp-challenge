@@ -44,4 +44,4 @@ jobs:
         run: |
           set -o errexit
           set -o pipefail
-          uv run --python 3.14.3t challenge/harness.py submissions/mpage.py graphs
+          uv run --python 3.14.3t challenge/harness.py submissions/example.py graphs
