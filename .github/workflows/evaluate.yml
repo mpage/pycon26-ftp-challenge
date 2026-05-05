@@ -82,6 +82,11 @@ jobs:
           cat /proc/self/cgroup
           env | grep -iE "python|gil|cpu|proc|thread|affinity"
 
+      - name: Check thread limits
+        run: |
+          cat /proc/self/limits | grep -i proc
+          ulimit -u
+
       - name: Run Harness
         id: run_harness
         timeout-minutes: 10
