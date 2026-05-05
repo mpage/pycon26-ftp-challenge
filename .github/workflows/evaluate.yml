@@ -65,7 +65,7 @@ jobs:
       - name: Set up Python 3.14t
         uses: actions/setup-python@v6
         with:
-          python-version: "3.14t"
+          python-version: "3.14.2t"
 
       - name: Run Harness
         id: run_harness
