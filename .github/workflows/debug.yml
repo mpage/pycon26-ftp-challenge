@@ -1,0 +1,48 @@
+name: Debug Performance
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run_harness:
+    needs: validate_pr
+    runs-on: self-hosted
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+
+      - name: Debug CPU/GIL constraints
+        run: |
+          # What Python sees
+          uv run --python python3.14.3t python -c "
+          import sys, os
+          print('GIL enabled:', sys._is_gil_enabled())
+          print('CPU count:', os.cpu_count())
+          print('Affinity:', len(os.sched_getaffinity(0)), os.sched_getaffinity(0))
+          print('PYTHON_GIL env:', os.environ.get('PYTHON_GIL', '<not set>'))
+          "
+
+          # Process-level info
+          nproc
+          taskset -cp $$
+          cat /proc/self/cgroup
+          env | grep -iE "python|gil|cpu|proc|thread|affinity"
+
+      - name: Check thread limits
+        run: |
+          cat /proc/self/limits | grep -i proc
+          ulimit -u
+
+      - name: Run Harness
+        id: run_harness
+        timeout-minutes: 10
+        run: |
+          set -o errexit
+          set -o pipefail
+          uv run --python 3.14.3t challenge/harness.py submissions/mpage.py graphs
