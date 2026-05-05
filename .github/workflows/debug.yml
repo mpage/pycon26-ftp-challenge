@@ -49,13 +49,10 @@ jobs:
           echo "=== Full env diff (service vs login) ==="
           env | sort
 
-      - name: Wait for bg work to settle
-        run: sleep 60
-
-      - name: First harness run
+      - name: Two runs same step
         run: |
+          echo "=== First run ==="
           uv run --python 3.14.3t challenge/harness.py submissions/example.py graphs/diamond.json
-
-      - name: Second harness run
-        run: |
+          echo ""
+          echo "=== Second run ==="
           uv run --python 3.14.3t challenge/harness.py submissions/example.py graphs/diamond.json
