@@ -46,7 +46,7 @@ Valid solutions will be shared on the leaderboard [here](https://mpage.github.io
    must be able to answer questions about how it works.
 6. There is a maximum execution time of 10 minutes. Submissions that run longer
    than this will be cancelled and receive no score.
-7. All solutions must by Python solutions, and runnable using Python 3.14t.
+7. All solutions must be pure Python solutions, and runnable using Python 3.14t.
 8. Use of third party dependencies is not allowed.
 
 
