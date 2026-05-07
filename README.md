@@ -1,10 +1,12 @@
 # PyCon 2026 Free-Threading Challenge
 
-This repository hosts a Python free-threading performance challenge for PyCon 2026.
-Participants implement a solution in `submissions/` and compete on correctness and
-runtime under Python `3.14t`.
+Welcome to the Free-Threading Challenge, hosted at the Meta booth at Pycon US 2026. This challenge will run from Friday, May 15, 8:00am to Saturday, May 16, 4:00pm PST.
+Participants will implement a solution in `submissions/` and compete on correctness and
+runtime under Python `3.14t` (the free-threading build of Python). The top 25 valid solutions each day will receive a swag prize!
 
-Your challenge is to implement a scheduler for a build system that builds all
+## The Challenge
+
+Your challenge, should you choose to accept it, is to implement a scheduler for a build system that builds all
 targets a quickly as possible while obeying the following constraints:
 
 1) Each target is built exactly once.
@@ -12,25 +14,27 @@ targets a quickly as possible while obeying the following constraints:
 
 Your solution should perform well on a variety of graph shapes and
 sizes. Solutions will be evaluated on a 24 core machine; winning solutions will
-likely take advantage this fact.
+likely take advantage of this fact.
+
+Valid solutions will be shared on the leaderboard [here](https://mpage.github.io/pycon26-ftp-challenge/leaderboard/).
 
 ## Quick Start
 
 1. Fork the repository.
 2. Read `submission_template.py` to get started.
 3. Add your solution at `submissions/<github_username>.py`.
-4. Evaluate your solution locally:
+4. Evaluate your solution locally and iterate:
 
    ```bash
    python challenge/harness.py submissions/<github_username>.py graphs
    ```
 
-5. Open a pull request using the provided template.
+5. Once you are happy with your solution open a pull request using the provided template.
 
 ## Rules
 
-1. The contest starts at 8am Friday and Saturday. The top 25 finishers each day win swag!
-   Swing by the Meta booth at 5:45pm Friday and 4:00pm Saturday to pick up your swag.
+1.This challenge will run from Friday, May 15, 8:00am to Saturday, May 16, 4:00pm PST. The top 25 finishers at the end of each conference day win swag!
+   Swing by the Meta booth at 5:45pm Friday and 4:00pm Saturday to pick up your swag and have the opportunity to demo your solution if you wish.
 2. You can enter as many submissions as you like; only your highest score will
    count towards the leaderboard.
 3. One prize per contestant.
@@ -40,10 +44,9 @@ likely take advantage this fact.
    must be able to answer questions about how it works.
 6. There is a maximum execution time of 10 minutes. Submissions that run longer
    than this will be cancelled and receive no score.
+7. All solutions must by Python solutions, and runnable using Python 3.14t.
+8. Use of third party dependencies is not allowed.
 
-## Leaderboard
-
-Visit the leaderboard [here](https://mpage.github.io/pycon26-ftp-challenge/leaderboard/).
 
 ## Evaluation
 
@@ -74,6 +77,8 @@ uv run --python 3.14t python
 pyenv install 3.14.4t
 pyenv local 3.14.4t
 ```
+
+To learn more about Python free threading see [the Python Free Threading Guide](https://py-free-threading.github.io/)
 
 ## File Reference
 
