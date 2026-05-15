@@ -35,21 +35,29 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         def run(target):
-            dep_results = {d.name: results[d.name] for d in target.deps}
-            result = target.build(dep_results)
-            to_submit = []
-            with lock:
-                results[target.name] = result
-                for dep in dependents[target.name]:
-                    in_degree[dep.name] -= 1
-                    if in_degree[dep.name] == 0:
-                        to_submit.append(dep)
-                remaining[0] -= 1
-                is_done = remaining[0] == 0
-            if is_done:
-                done_event.set()
-            for dep in to_submit:
-                executor.submit(run, dep)
+            # Loop to execute tasks inline when only one successor is ready,
+            # avoiding thread handoff overhead on serial/chain-like paths.
+            while target is not None:
+                dep_results = {d.name: results[d.name] for d in target.deps}
+                result = target.build(dep_results)
+                to_submit = []
+                with lock:
+                    results[target.name] = result
+                    for dep in dependents[target.name]:
+                        in_degree[dep.name] -= 1
+                        if in_degree[dep.name] == 0:
+                            to_submit.append(dep)
+                    remaining[0] -= 1
+                    is_done = remaining[0] == 0
+                if is_done:
+                    done_event.set()
+                # Submit all but one ready task; execute one inline
+                if to_submit:
+                    for dep in to_submit[1:]:
+                        executor.submit(run, dep)
+                    target = to_submit[0]
+                else:
+                    target = None
 
         roots = [t for name, t in graph.targets.items() if in_degree[name] == 0]
         for t in roots:
