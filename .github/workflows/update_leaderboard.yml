@@ -2,7 +2,7 @@ name: Update Leaderboard
 
 on:
   workflow_run:
-    workflows: ["Report Results"]
+    workflows: ["Evaluate Submission"]
     types: [completed]
   workflow_dispatch:
 
