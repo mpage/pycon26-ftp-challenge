@@ -1,56 +1,243 @@
 name: Evaluate Submission
 
 on:
-  workflow_run:
-    workflows: ["Validate Submission"]
+  pull_request_target:
     types:
-      - completed
-
-permissions:
-  contents: read, write
-  pull-requests: read
+      - opened
+      - synchronize
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to evaluate'
+        required: true
+        type: number
 
 jobs:
+  resolve_pr:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      pr_author: ${{ steps.resolve.outputs.pr_author }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      html_url: ${{ steps.resolve.outputs.html_url }}
+    steps:
+      - name: Resolve PR details
+        id: resolve
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            let pr;
+            if (context.eventName === 'workflow_dispatch') {
+              const { data } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: ${{ inputs.pr_number || 0 }},
+              });
+              pr = data;
+            } else {
+              pr = context.payload.pull_request;
+            }
+            core.setOutput('pr_number', pr.number);
+            core.setOutput('pr_author', pr.user.login);
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('html_url', pr.html_url);
+
+  validate_pr:
+    needs: resolve_pr
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Validate changed files
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prAuthor = '${{ needs.resolve_pr.outputs.pr_author }}';
+            const prNumber = ${{ needs.resolve_pr.outputs.pr_number }};
+            const expectedFile = `submissions/${prAuthor}.py`;
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+
+            const changedFiles = files.map((f) => f.filename);
+
+            if (changedFiles.length !== 1) {
+              core.setFailed(
+                `PR must modify exactly one file (${expectedFile}), but it modifies ${changedFiles.length}: ${changedFiles.join(", ")}`,
+              );
+              return;
+            }
+
+            if (changedFiles[0] !== expectedFile) {
+              core.setFailed(
+                `PR must only modify ${expectedFile}, but it modifies ${changedFiles[0]}`,
+              );
+              return;
+            }
+
+            core.info(`PR correctly modifies only ${expectedFile}`);
+
   run_harness:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    needs: [resolve_pr, validate_pr]
     runs-on: self-hosted
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
         results: ${{ steps.run_harness.outputs.results }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up Python 3.14t
-        uses: actions/setup-python@v6
         with:
-          python-version: "3.14t"
+          ref: ${{ needs.resolve_pr.outputs.head_sha }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+
+      - name: Precompile Python files
+        run: |
+          uv run --python 3.14.3t python -m compileall challenge/ submissions/
 
       - name: Run Harness
         id: run_harness
+        timeout-minutes: 10
         run: |
-          python challenge/harness.py --num-trials 3 --json submissions/${{ env.PR_AUTHOR }}.py graphs | tee ${{ runner.temp }}/results.txt
+          set -o errexit
+          set -o pipefail
+          uv run --python 3.14.3t challenge/harness.py --num-trials 3 --json submissions/${{ needs.resolve_pr.outputs.pr_author }}.py graphs | tee ${{ runner.temp }}/results.txt
           DATA=$(cat ${{ runner.temp }}/results.txt | jq -c .)
           echo "results=$DATA" >> "$GITHUB_OUTPUT"
 
   update_journal:
-    needs: evalute
+    needs: [resolve_pr, run_harness]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        ref: main
+        with:
+          ref: main
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v6
         with:
           python-version: "3.14"
 
-      - run: |
-          echo "${{ needs.run_harness.outputs.results }}" > ${{ runner.temp }}/results.txt
-          python scores/format_journal_entry.py ${{ github.event.workflow_run.jobs.evaluate.outputs.pr_author }} ${{ github.event.workflow_run.jobs.evaluate.outputs.pr_url }} ${{ github.event.workflow_run.jobs.evaluate.outputs.pr_number }} ${{ runner.temp }}/results.txt >> scores/journal.txt
+      - name: Check org membership
+        id: check_meta
+        run: |
+          set -e
+          USERNAME="${{ needs.resolve_pr.outputs.pr_author }}"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token ${{ secrets.ORG_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/orgs/facebook/members/${USERNAME}")
+          if [ "$HTTP_CODE" = "204" ]; then
+            echo "is_meta=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_meta=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update journal
+        run: |
+          set -e
+          cat <<EOF > ${{ runner.temp }}/results.txt
+          ${{ needs.run_harness.outputs.results }}
+          EOF
+          IS_META_FLAG=""
+          if [ "${{ steps.check_meta.outputs.is_meta }}" = "true" ]; then
+            IS_META_FLAG="--is-meta"
+          fi
+          python scores/format_journal_entry.py ${{ needs.resolve_pr.outputs.pr_author }} ${{ needs.resolve_pr.outputs.html_url }} ${{ needs.resolve_pr.outputs.pr_number }} ${{ runner.temp }}/results.txt $IS_META_FLAG >> scores/journal.txt
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add scores/journal.txt
-          git commit -m "Log submission result from ${{ github.event.workflow_run.jobs.evaluate.pr_author }}"
+          git commit -m "Log submission result from ${{ needs.resolve_pr.outputs.pr_author }}"
           git push
+
+  report_results:
+    needs: [resolve_pr, run_harness]
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Fetch results
+        id: fetch_results
+        run: |
+          cat <<EOF > ${{ runner.temp }}/results.txt
+          ${{ needs.run_harness.outputs.results }}
+          EOF
+
+      - name: Post score comment on PR
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        uses: actions/github-script@v7
+        env:
+          RESULTS_FILE: ${{ runner.temp }}/results.txt
+        with:
+          script: |
+            const fs = require("fs");
+            const marker = "<!-- pycon26-ft-score -->";
+            const results = JSON.parse(fs.readFileSync(process.env.RESULTS_FILE, "utf8"));
+            const passed = results.summary.overall_passed;
+            const title = passed ? "## ✅ Results" : "## ❌ Results: DNF";
+
+            const lines = [
+              marker,
+              title,
+              "",
+              `| Metric | Value |`,
+              `| ------ | ----- |`,
+              `| **Speedup** | ${results.summary.overall_speedup}x |`,
+              `| **Passed** | ${results.summary.overall_passed} |`,
+              `| **Graphs** | ${(results.results || []).length} |`,
+            ];
+
+            if (results.results && results.results.length > 0) {
+              lines.push("", "### Per-graph results", "");
+              lines.push("| Graph | Speedup | Status |");
+              lines.push("| ----- | ------: | :----: |");
+              for (const r of results.results) {
+                const s = r.passed ? "✅" : "❌";
+                lines.push(`| ${r.graph} | ${r.speedup}x | ${s} |`);
+              }
+            }
+
+            if (results.error) {
+              lines.push("", `**Error:** ${score.error}`);
+            }
+
+            lines.push("", "---", "[View the leaderboard](https://mpage.github.io/pycon26-ftp-challenge/leaderboard/)");
+
+            const body = lines.join("\n");
+            const issue_number = ${{ needs.resolve_pr.outputs.pr_number }};
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const existing = comments.find(c =>
+              c.user?.type === "Bot" && c.body?.includes(marker)
+            );
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              body,
+            });

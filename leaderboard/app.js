@@ -98,11 +98,11 @@ function formatSeconds(value) {
 
 function formatSpeedup(entry) {
   if (entry.speedupValue !== null) {
-    return `${entry.speedupValue.toFixed(1)}x`;
+    return `${entry.speedupValue.toFixed(2)}x`;
   }
 
   if (typeof state.baselineTime === "number" && entry.medianTimeSeconds > 0) {
-    return `${(state.baselineTime / entry.medianTimeSeconds).toFixed(1)}x`;
+    return `${(state.baselineTime / entry.medianTimeSeconds).toFixed(2)}x`;
   }
 
   return "--";

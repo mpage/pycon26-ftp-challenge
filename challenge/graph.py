@@ -44,7 +44,12 @@ class Target:
         """
         h = hashlib.sha256()
         h.update(self.name.encode())
-        h.update(self._make_source_data())
+        source = self._make_source_data()
+        h.update(source)
+        acc = 0x811C9DC5
+        for i in range(0, len(source), 8):
+            acc = ((acc ^ source[i]) * 0x01000193) & 0xFFFFFFFF
+        h.update(acc.to_bytes(4, "little"))
         for dep_name in sorted(dep_results):
             h.update(dep_results[dep_name])
         return h.digest()

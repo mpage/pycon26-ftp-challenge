@@ -9,7 +9,7 @@ import random
 from graph import BuildGraph, Target
 
 
-def _random_work(rng: random.Random, low: int = 500, high: int = 5000) -> int:
+def _random_work(rng: random.Random, low: int = 5_000, high: int = 50_000) -> int:
     return rng.randint(low, high)
 
 
@@ -36,7 +36,7 @@ def generate_wide(num_targets: int, seed: int) -> BuildGraph:
         dep_names = rng.sample(leaf_names, num_deps)
         deps = [targets[d] for d in dep_names]
         targets[name] = Target(
-            name=name, deps=deps, work=_random_work(rng, 100, 500), seed=seed
+            name=name, deps=deps, work=_random_work(rng, 1_000, 5_000), seed=seed
         )
 
     return BuildGraph(seed=seed, targets=targets)
@@ -125,7 +125,7 @@ def generate_tree(num_targets: int, seed: int) -> BuildGraph:
             targets[parent_name] = Target(
                 name=parent_name,
                 deps=[targets[c] for c in children],
-                work=_random_work(rng, 100, 1000),
+                work=_random_work(rng, 1_000, 10_000),
                 seed=seed,
             )
             next_level.append(parent_name)
@@ -175,11 +175,11 @@ def generate_realistic(num_targets: int, seed: int) -> BuildGraph:
 
             # Earlier layers tend to be more expensive (core libraries)
             if layer_idx < num_layers // 3:
-                work = _random_work(rng, 2000, 10000)
+                work = _random_work(rng, 10_000, 50_000)
             elif layer_idx < 2 * num_layers // 3:
-                work = _random_work(rng, 500, 3000)
+                work = _random_work(rng, 3_000, 15_000)
             else:
-                work = _random_work(rng, 100, 1000)
+                work = _random_work(rng, 1_000, 5_000)
 
             targets[name] = Target(name=name, deps=deps, work=work, seed=seed)
             all_previous.append(name)

@@ -1,106 +1,18 @@
 {
-  "last_updated": "2025-01-01T00:00:00Z",
-  "baseline_time": 10.0,
+  "last_updated": "2026-05-13T16:49:40.744094+00:00",
+  "baseline_time": 40.40568221616559,
   "entries": [
     {
-      "username": "test_user",
-      "display_name": "Test User",
-      "median_time_seconds": 4.0,
-      "speedup": "2.50",
+      "username": "mpage",
+      "display_name": "mpage",
+      "median_time_seconds": 7.370504657039419,
+      "speedup": "5.48",
       "status": "valid",
-      "merged_at": "2025-01-01T12:00:00Z",
-      "num_runs": 5,
-      "pr_number": 1,
-      "pr_url": "https://github.com/example/repo/pull/1"
-    },
-    {
-      "username": "test_user_2",
-      "display_name": "Test User",
-      "median_time_seconds": 4.0,
-      "speedup": "2.50",
-      "status": "valid",
-      "merged_at": "2025-01-01T12:00:00Z",
-      "num_runs": 5,
-      "pr_number": 1,
-      "pr_url": "https://github.com/example/repo/pull/1"
-    },
-    {
-      "username": "test_user_3",
-      "display_name": "Test User",
-      "median_time_seconds": 4.0,
-      "speedup": "2.50",
-      "status": "valid",
-      "merged_at": "2025-01-01T12:00:00Z",
-      "num_runs": 5,
-      "pr_number": 1,
-      "pr_url": "https://github.com/example/repo/pull/1"
-    },
-    {
-      "username": "test_user_4",
-      "display_name": "Test User",
-      "median_time_seconds": 4.0,
-      "speedup": "2.50",
-      "status": "valid",
-      "merged_at": "2025-01-01T12:00:00Z",
-      "num_runs": 5,
-      "pr_number": 1,
-      "pr_url": "https://github.com/example/repo/pull/1"
-    },
-        {
-      "username": "test_user_meta",
-      "display_name": "Test User",
-      "median_time_seconds": 4.0,
-      "speedup": "2.50",
-      "status": "valid",
-      "merged_at": "2025-01-01T12:00:00Z",
-      "num_runs": 5,
-      "pr_number": 1,
-      "pr_url": "https://github.com/example/repo/pull/1",
+      "merged_at": "2026-05-13T16:49:26+00:00",
+      "num_runs": 13,
+      "pr_number": 4,
+      "pr_url": "https://github.com/mpage/pycon26-ftp-challenge/pull/4",
       "is_meta": true
-    },
-        {
-      "username": "test_user_5",
-      "display_name": "Test User",
-      "median_time_seconds": 4.0,
-      "speedup": "2.50",
-      "status": "valid",
-      "merged_at": "2025-01-01T12:00:00Z",
-      "num_runs": 5,
-      "pr_number": 1,
-      "pr_url": "https://github.com/example/repo/pull/1"
-    },
-        {
-      "username": "test_user_6",
-      "display_name": "Test User",
-      "median_time_seconds": 4.0,
-      "speedup": "2.50",
-      "status": "valid",
-      "merged_at": "2025-01-01T12:00:00Z",
-      "num_runs": 5,
-      "pr_number": 1,
-      "pr_url": "https://github.com/example/repo/pull/1"
-    },
-        {
-      "username": "test_user_7",
-      "display_name": "Test User",
-      "median_time_seconds": 4.0,
-      "speedup": "2.50",
-      "status": "valid",
-      "merged_at": "2025-01-01T12:00:00Z",
-      "num_runs": 5,
-      "pr_number": 1,
-      "pr_url": "https://github.com/example/repo/pull/1"
-    },
-        {
-      "username": "test_user_8",
-      "display_name": "Test User",
-      "median_time_seconds": 4.0,
-      "speedup": "2.50",
-      "status": "valid",
-      "merged_at": "2025-01-01T12:00:00Z",
-      "num_runs": 5,
-      "pr_number": 1,
-      "pr_url": "https://github.com/example/repo/pull/1"
     }
   ]
 }
