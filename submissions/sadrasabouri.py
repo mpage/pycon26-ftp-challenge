@@ -10,9 +10,30 @@ Rules:
 
 import os
 import threading
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 from graph import BuildGraph
+
+
+def _compute_critical(graph, dependents):
+    """Return dict mapping target name -> critical path length (work units)."""
+    in_deg = {name: len(t.deps) for name, t in graph.targets.items()}
+    q: deque = deque(name for name, d in in_deg.items() if d == 0)
+    topo: list[str] = []
+    while q:
+        name = q.popleft()
+        topo.append(name)
+        for dep in dependents[name]:
+            in_deg[dep.name] -= 1
+            if in_deg[dep.name] == 0:
+                q.append(dep.name)
+    critical: dict[str, int] = {}
+    for name in reversed(topo):
+        t = graph.targets[name]
+        max_succ = max((critical[d.name] for d in dependents[name]), default=0)
+        critical[name] = t.work + max_succ
+    return critical
 
 
 def build_all(graph: BuildGraph) -> dict[str, bytes]:
@@ -28,6 +49,8 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         for dep in target.deps:
             dependents[dep.name].append(target)
 
+    critical = _compute_critical(graph, dependents)
+
     remaining = [len(graph.targets)]
     done_event = threading.Event()
 
@@ -35,8 +58,6 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         def run(target):
-            # Loop to execute tasks inline when only one successor is ready,
-            # avoiding thread handoff overhead on serial/chain-like paths.
             while target is not None:
                 dep_results = {d.name: results[d.name] for d in target.deps}
                 result = target.build(dep_results)
@@ -51,15 +72,20 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                     is_done = remaining[0] == 0
                 if is_done:
                     done_event.set()
-                # Submit all but one ready task; execute one inline
                 if to_submit:
+                    # Execute the highest-priority (longest critical path) task inline
+                    to_submit.sort(key=lambda t: critical[t.name], reverse=True)
                     for dep in to_submit[1:]:
                         executor.submit(run, dep)
                     target = to_submit[0]
                 else:
                     target = None
 
-        roots = [t for name, t in graph.targets.items() if in_degree[name] == 0]
+        roots = sorted(
+            (t for name, t in graph.targets.items() if in_degree[name] == 0),
+            key=lambda t: critical[t.name],
+            reverse=True,
+        )
         for t in roots:
             executor.submit(run, t)
 
