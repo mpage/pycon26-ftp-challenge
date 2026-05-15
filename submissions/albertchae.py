@@ -8,7 +8,9 @@ Rules:
 - A target must not be built until all of its dependencies have completed.
 """
 
-from collections import deque
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from graph import BuildGraph
 
@@ -24,21 +26,53 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     """
     results: dict[str, bytes] = {}
 
-    remaining_deps = {name: len(t.deps) for name, t in graph.targets.items()}
+    remaining = {name: len(t.deps) for name, t in graph.targets.items()}
     dependents: dict[str, list[str]] = {name: [] for name in graph.targets}
     for name, target in graph.targets.items():
         for dep in target.deps:
             dependents[dep.name].append(name)
 
-    ready = deque(name for name, n in remaining_deps.items() if n == 0)
-    while ready:
-        name = ready.popleft()
-        target = graph.targets[name]
-        dep_results = {d.name: results[d.name] for d in target.deps}
-        results[name] = target.build(dep_results)
-        for dependent in dependents[name]:
-            remaining_deps[dependent] -= 1
-            if remaining_deps[dependent] == 0:
-                ready.append(dependent)
+    if not graph.targets:
+        return results
+
+    lock = threading.Lock()
+    done = threading.Event()
+    pending = len(graph.targets)
+    workers = os.cpu_count() or 1
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+
+        def run(name: str) -> None:
+            nonlocal pending
+            target = graph.targets[name]
+            # Safe to read without the lock: name was only submitted after
+            # every dep's result was written under `lock`, and the lock's
+            # release/acquire establishes happens-before.
+            dep_results = {d.name: results[d.name] for d in target.deps}
+            result = target.build(dep_results)
+
+            newly_ready: list[str] = []
+            with lock:
+                results[name] = result
+                pending -= 1
+                finished = pending == 0
+                for dep in dependents[name]:
+                    remaining[dep] -= 1
+                    if remaining[dep] == 0:
+                        newly_ready.append(dep)
+
+            for dep in newly_ready:
+                executor.submit(run, dep)
+            if finished:
+                done.set()
+
+        # Snapshot the initial roots before submitting anything — once we
+        # start submitting, workers begin decrementing `remaining` and the
+        # naive iteration would re-pick targets that just became ready.
+        roots = [name for name, n in remaining.items() if n == 0]
+        for name in roots:
+            executor.submit(run, name)
+
+        done.wait()
 
     return results
