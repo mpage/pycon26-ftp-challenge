@@ -20,19 +20,19 @@ def _compute_critical(graph, dependents):
     """Return dict mapping target name -> critical path length (work units)."""
     in_deg = {name: len(t.deps) for name, t in graph.targets.items()}
     q: deque = deque(name for name, d in in_deg.items() if d == 0)
-    topo: list[str] = []
+    order: list[str] = []
     while q:
         name = q.popleft()
-        topo.append(name)
+        order.append(name)
         for dep in dependents[name]:
             in_deg[dep.name] -= 1
             if in_deg[dep.name] == 0:
                 q.append(dep.name)
     critical: dict[str, int] = {}
-    for name in reversed(topo):
+    for name in reversed(order):
         t = graph.targets[name]
-        max_succ = max((critical[d.name] for d in dependents[name]), default=0)
-        critical[name] = t.work + max_succ
+        best = max((critical[d.name] for d in dependents[name]), default=0)
+        critical[name] = t.work + best
     return critical
 
 
@@ -61,9 +61,11 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             while target is not None:
                 dep_results = {d.name: results[d.name] for d in target.deps}
                 result = target.build(dep_results)
+                # Write result before acquiring lock — safe because dependents
+                # can only observe this key after we decrement their in_degree.
+                results[target.name] = result
                 to_submit = []
                 with lock:
-                    results[target.name] = result
                     for dep in dependents[target.name]:
                         in_degree[dep.name] -= 1
                         if in_degree[dep.name] == 0:
@@ -73,11 +75,12 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                 if is_done:
                     done_event.set()
                 if to_submit:
-                    # Execute the highest-priority (longest critical path) task inline
-                    to_submit.sort(key=lambda t: critical[t.name], reverse=True)
-                    for dep in to_submit[1:]:
-                        executor.submit(run, dep)
-                    target = to_submit[0]
+                    # Execute the highest-priority task inline; submit the rest
+                    inline = max(to_submit, key=lambda t: critical[t.name])
+                    for dep in to_submit:
+                        if dep is not inline:
+                            executor.submit(run, dep)
+                    target = inline
                 else:
                     target = None
 
