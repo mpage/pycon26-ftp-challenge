@@ -9,92 +9,52 @@ Rules:
 """
 
 import os
-from collections import deque
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
-from graph import BuildGraph, Target
-
-
-def topological_sort(graph: BuildGraph) -> list[Target]:
-    """Return targets in a valid build order."""
-    in_degree = {name: len(t.deps) for name, t in graph.targets.items()}
-    dependents: dict[str, list[Target]] = {name: [] for name in graph.targets}
-    for name, target in graph.targets.items():
-        for dep in target.deps:
-            dependents[dep.name].append(target)
-
-    queue = deque(graph.targets[name] for name, deg in in_degree.items() if deg == 0)
-    order: list[Target] = []
-    while queue:
-        target = queue.popleft()
-        order.append(target)
-        for dep in dependents[target.name]:
-            in_degree[dep.name] -= 1
-            if in_degree[dep.name] == 0:
-                queue.append(dep)
-
-    return order
-
-
-def trivial_sort(graph: BuildGraph) -> list[Target]:
-    return list(graph.targets.values())
-
-
-def my_smart_order(graph: BuildGraph) -> list[Target]:
-    """
-    My smart! way to order targets in the graph.
-
-    Args:
-        graph: The build graph to execute.
-
-    Returns:
-        Optimized order for targets
-    """
-    # TODO: make it better
-    return topological_sort(graph)
+from graph import BuildGraph
 
 
 def build_all(graph: BuildGraph) -> dict[str, bytes]:
-    """Build all targets in the graph, respecting dependency order.
+    """Build all targets in the graph, respecting dependency order."""
+    if not graph.targets:
+        return {}
 
-    Args:
-        graph: The build graph to execute.
-
-    Returns:
-        A dict mapping target name to its build result (bytes).
-    """
+    results: dict[str, bytes] = {}
+    lock = threading.Lock()
     in_degree = {name: len(t.deps) for name, t in graph.targets.items()}
-    dependents: dict[str, list[Target]] = {name: [] for name in graph.targets}
+    dependents: dict[str, list] = {name: [] for name in graph.targets}
     for target in graph.targets.values():
         for dep in target.deps:
             dependents[dep.name].append(target)
 
-    ready = deque(graph.targets[name] for name, deg in in_degree.items() if deg == 0)
-    results: dict[str, bytes] = {}
+    remaining = [len(graph.targets)]
+    done_event = threading.Event()
 
-    def build_target(
-        target: Target, dep_results: dict[str, bytes]
-    ) -> tuple[Target, bytes]:
-        return target, target.build(dep_results)
+    max_workers = min(64, (os.cpu_count() or 1) * 2)
 
-    max_workers = min(24, os.cpu_count() or 1)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        running: set[Future[tuple[Target, bytes]]] = set()
-
-        while ready or running:
-            while ready and len(running) < max_workers:
-                target = ready.popleft()
-                dep_results = {d.name: results[d.name] for d in target.deps}
-                running.add(executor.submit(build_target, target, dep_results))
-
-            done, running = wait(running, return_when=FIRST_COMPLETED)
-            for future in done:
-                target, result = future.result()
+        def run(target):
+            dep_results = {d.name: results[d.name] for d in target.deps}
+            result = target.build(dep_results)
+            to_submit = []
+            with lock:
                 results[target.name] = result
+                for dep in dependents[target.name]:
+                    in_degree[dep.name] -= 1
+                    if in_degree[dep.name] == 0:
+                        to_submit.append(dep)
+                remaining[0] -= 1
+                is_done = remaining[0] == 0
+            if is_done:
+                done_event.set()
+            for dep in to_submit:
+                executor.submit(run, dep)
 
-                for dependent in dependents[target.name]:
-                    in_degree[dependent.name] -= 1
-                    if in_degree[dependent.name] == 0:
-                        ready.append(dependent)
+        roots = [t for name, t in graph.targets.items() if in_degree[name] == 0]
+        for t in roots:
+            executor.submit(run, t)
+
+        done_event.wait()
 
     return results
