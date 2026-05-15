@@ -9,11 +9,13 @@ Rules:
 """
 
 import os
+import queue
 import threading
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 
 from graph import BuildGraph
+
+_STOP = object()
 
 
 def _compute_critical(graph, dependents):
@@ -54,44 +56,60 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     remaining = [len(graph.targets)]
     done_event = threading.Event()
 
-    max_workers = min(64, (os.cpu_count() or 1) * 2)
+    work_q: queue.SimpleQueue = queue.SimpleQueue()
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        def run(target):
-            while target is not None:
-                dep_results = {d.name: results[d.name] for d in target.deps}
-                result = target.build(dep_results)
-                # Write result before acquiring lock — safe because dependents
-                # can only observe this key after we decrement their in_degree.
-                results[target.name] = result
-                to_submit = []
-                with lock:
-                    for dep in dependents[target.name]:
-                        in_degree[dep.name] -= 1
-                        if in_degree[dep.name] == 0:
-                            to_submit.append(dep)
-                    remaining[0] -= 1
-                    is_done = remaining[0] == 0
-                if is_done:
-                    done_event.set()
-                if to_submit:
-                    # Execute the highest-priority task inline; submit the rest
+    def run(start_target) -> None:
+        target = start_target
+        while target is not None:
+            dep_results = {d.name: results[d.name] for d in target.deps}
+            result = target.build(dep_results)
+            results[target.name] = result
+            to_submit = []
+            with lock:
+                for dep in dependents[target.name]:
+                    in_degree[dep.name] -= 1
+                    if in_degree[dep.name] == 0:
+                        to_submit.append(dep)
+                remaining[0] -= 1
+                is_done = remaining[0] == 0
+            if is_done:
+                done_event.set()
+            if to_submit:
+                if len(to_submit) == 1:
+                    target = to_submit[0]
+                else:
                     inline = max(to_submit, key=lambda t: critical[t.name])
                     for dep in to_submit:
                         if dep is not inline:
-                            executor.submit(run, dep)
+                            work_q.put(dep)
                     target = inline
-                else:
-                    target = None
+            else:
+                target = None
 
-        roots = sorted(
-            (t for name, t in graph.targets.items() if in_degree[name] == 0),
-            key=lambda t: critical[t.name],
-            reverse=True,
-        )
-        for t in roots:
-            executor.submit(run, t)
+    def worker() -> None:
+        while True:
+            item = work_q.get()
+            if item is _STOP:
+                work_q.put(_STOP)
+                return
+            run(item)
 
-        done_event.wait()
+    num_workers = min(64, (os.cpu_count() or 1) * 2)
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(num_workers)]
+    for t in threads:
+        t.start()
+
+    roots = sorted(
+        (t for name, t in graph.targets.items() if in_degree[name] == 0),
+        key=lambda t: critical[t.name],
+        reverse=True,
+    )
+    for t in roots:
+        work_q.put(t)
+
+    done_event.wait()
+    work_q.put(_STOP)
+    for t in threads:
+        t.join()
 
     return results
