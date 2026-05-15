@@ -1,0 +1,159 @@
+name: Report Results
+
+on:
+  workflow_run:
+    workflows: ["Evaluate Submission"]
+    types: [completed]
+
+jobs:
+  report:
+    if: >-
+      github.event.workflow_run.event == 'pull_request'
+      || github.event.workflow_run.event == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Download results
+        id: download
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: eval-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ${{ runner.temp }}/eval-results
+
+      - name: Read PR metadata
+        if: steps.download.outcome == 'success'
+        id: meta
+        run: |
+          set -euo pipefail
+          META="${{ runner.temp }}/eval-results/pr_metadata.json"
+          echo "pr_number=$(jq -r .pr_number "$META")" >> "$GITHUB_OUTPUT"
+          echo "pr_author=$(jq -r .pr_author "$META")" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$(jq -r .head_sha "$META")" >> "$GITHUB_OUTPUT"
+          echo "html_url=$(jq -r .html_url "$META")" >> "$GITHUB_OUTPUT"
+
+      - name: Post failure comment
+        if: steps.download.outcome == 'success' && github.event.workflow_run.conclusion == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = "<!-- pycon26-ft-score -->";
+            const body = [
+              marker,
+              "## ❌ Evaluation Failed",
+              "",
+              `The evaluation workflow failed. [View logs](${{ github.event.workflow_run.html_url }}).`,
+            ].join("\n");
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.meta.outputs.pr_number }},
+              body,
+            });
+
+      - name: Post score comment
+        if: steps.download.outcome == 'success' && github.event.workflow_run.conclusion == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const marker = "<!-- pycon26-ft-score -->";
+            const results = JSON.parse(
+              fs.readFileSync("${{ runner.temp }}/eval-results/results.json", "utf8"),
+            );
+            const passed = results.summary.overall_passed;
+            const title = passed ? "## ✅ Results" : "## ❌ Results: DNF";
+
+            const lines = [
+              marker,
+              title,
+              "",
+              `| Metric | Value |`,
+              `| ------ | ----- |`,
+              `| **Speedup** | ${results.summary.overall_speedup}x |`,
+              `| **Passed** | ${results.summary.overall_passed} |`,
+              `| **Graphs** | ${(results.results || []).length} |`,
+            ];
+
+            if (results.results && results.results.length > 0) {
+              lines.push("", "### Per-graph results", "");
+              lines.push("| Graph | Speedup | Status |");
+              lines.push("| ----- | ------: | :----: |");
+              for (const r of results.results) {
+                const s = r.passed ? "✅" : "❌";
+                lines.push(`| ${r.graph} | ${r.speedup}x | ${s} |`);
+              }
+            }
+
+            if (results.error) {
+              lines.push("", `**Error:** ${results.error}`);
+            }
+
+            lines.push(
+              "",
+              "---",
+              "[View the leaderboard](https://mpage.github.io/pycon26-ftp-challenge/leaderboard/)",
+            );
+
+            const body = lines.join("\n");
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.meta.outputs.pr_number }},
+              body,
+            });
+
+      - name: Checkout repo
+        if: steps.download.outcome == 'success' && github.event.workflow_run.conclusion == 'success'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python 3.14
+        if: steps.download.outcome == 'success' && github.event.workflow_run.conclusion == 'success'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Check org membership
+        if: steps.download.outcome == 'success' && github.event.workflow_run.conclusion == 'success'
+        id: check_meta
+        run: |
+          set -e
+          USERNAME="${{ steps.meta.outputs.pr_author }}"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token ${{ secrets.ORG_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/orgs/facebook/members/${USERNAME}")
+          if [ "$HTTP_CODE" = "204" ]; then
+            echo "is_meta=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_meta=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update journal
+        if: steps.download.outcome == 'success' && github.event.workflow_run.conclusion == 'success'
+        run: |
+          set -e
+          IS_META_FLAG=""
+          if [ "${{ steps.check_meta.outputs.is_meta }}" = "true" ]; then
+            IS_META_FLAG="--is-meta"
+          fi
+          python scores/format_journal_entry.py \
+            ${{ steps.meta.outputs.pr_author }} \
+            ${{ steps.meta.outputs.html_url }} \
+            ${{ steps.meta.outputs.pr_number }} \
+            ${{ runner.temp }}/eval-results/results.json \
+            $IS_META_FLAG >> scores/journal.txt
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add scores/journal.txt
+          git commit -m "Log submission result from ${{ steps.meta.outputs.pr_author }}"
+          git push

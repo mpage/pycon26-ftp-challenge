@@ -150,6 +150,12 @@ h2 {
   transition: background 180ms ease;
 } */
 
+.qr-card {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
 .cta-link:hover {
   background: var(--primary-strong);
 }
