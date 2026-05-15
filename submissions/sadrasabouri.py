@@ -15,7 +15,31 @@ from collections import deque
 
 from graph import BuildGraph
 
-_STOP = object()
+# Persistent thread pool — created once and reused across build_all() calls
+# to eliminate per-call thread creation/join overhead.
+_POOL_QUEUE: queue.SimpleQueue = queue.SimpleQueue()
+_POOL_TASK_FN: list = [None]  # [current run function]
+_POOL_INITIALIZED = False
+_POOL_LOCK = threading.Lock()
+
+
+def _pool_worker() -> None:
+    while True:
+        item = _POOL_QUEUE.get()
+        _POOL_TASK_FN[0](item)
+
+
+def _ensure_pool() -> None:
+    global _POOL_INITIALIZED
+    if _POOL_INITIALIZED:
+        return
+    with _POOL_LOCK:
+        if _POOL_INITIALIZED:
+            return
+        n = min(128, (os.cpu_count() or 1) * 3)
+        for _ in range(n):
+            threading.Thread(target=_pool_worker, daemon=True).start()
+        _POOL_INITIALIZED = True
 
 
 def _compute_critical(graph, dependents):
@@ -43,6 +67,8 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     if not graph.targets:
         return {}
 
+    _ensure_pool()
+
     results: dict[str, bytes] = {}
     lock = threading.Lock()
     in_degree = {name: len(t.deps) for name, t in graph.targets.items()}
@@ -53,18 +79,14 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
 
     critical = _compute_critical(graph, dependents)
 
-    # Pre-sort each dependents list by critical path descending so to_submit[0]
-    # is always the highest-priority ready task — avoids max() call in the hot path.
+    # Pre-sort dependents by critical path so to_submit[0] is highest priority.
     for name in dependents:
         dependents[name].sort(key=lambda t: critical[t.name], reverse=True)
 
     remaining = [len(graph.targets)]
     done_event = threading.Event()
 
-    work_q: queue.SimpleQueue = queue.SimpleQueue()
-
-    def run(start_target) -> None:
-        target = start_target
+    def run(target) -> None:
         while target is not None:
             dep_results = {d.name: results[d.name] for d in target.deps}
             result = target.build(dep_results)
@@ -80,25 +102,14 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             if is_done:
                 done_event.set()
             if to_submit:
-                # to_submit[0] is highest-priority (dependents are pre-sorted)
                 for dep in to_submit[1:]:
-                    work_q.put(dep)
+                    _POOL_QUEUE.put(dep)
                 target = to_submit[0]
             else:
                 target = None
 
-    def worker() -> None:
-        while True:
-            item = work_q.get()
-            if item is _STOP:
-                work_q.put(_STOP)
-                return
-            run(item)
-
-    num_workers = min(128, (os.cpu_count() or 1) * 3)
-    threads = [threading.Thread(target=worker, daemon=True) for _ in range(num_workers)]
-    for t in threads:
-        t.start()
+    # Set the current run function BEFORE submitting any tasks.
+    _POOL_TASK_FN[0] = run
 
     roots = sorted(
         (t for name, t in graph.targets.items() if in_degree[name] == 0),
@@ -106,11 +117,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         reverse=True,
     )
     for t in roots:
-        work_q.put(t)
+        _POOL_QUEUE.put(t)
 
     done_event.wait()
-    work_q.put(_STOP)
-    for t in threads:
-        t.join()
-
     return results
