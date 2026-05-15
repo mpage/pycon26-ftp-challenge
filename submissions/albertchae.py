@@ -42,37 +42,43 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
 
-        def run(name: str) -> None:
+        def run(name: str | None) -> None:
             nonlocal pending
-            target = graph.targets[name]
-            # Safe to read without the lock: name was only submitted after
-            # every dep's result was written under `lock`, and the lock's
-            # release/acquire establishes happens-before.
-            dep_results = {d.name: results[d.name] for d in target.deps}
-            result = target.build(dep_results)
+            while name is not None:
+                target = graph.targets[name]
+                # Safe to read without the lock: name was only submitted
+                # after every dep's result was written under `lock`, and
+                # the release/acquire establishes happens-before.
+                dep_results = {d.name: results[d.name] for d in target.deps}
+                result = target.build(dep_results)
 
-            newly_ready: list[str] = []
-            with lock:
-                results[name] = result
-                pending -= 1
-                finished = pending == 0
-                for dep in dependents[name]:
-                    remaining[dep] -= 1
-                    if remaining[dep] == 0:
-                        newly_ready.append(dep)
+                newly_ready: list[str] = []
+                with lock:
+                    results[name] = result
+                    pending -= 1
+                    finished = pending == 0
+                    for dep in dependents[name]:
+                        remaining[dep] -= 1
+                        if remaining[dep] == 0:
+                            newly_ready.append(dep)
 
-            for dep in newly_ready:
-                executor.submit(run, dep)
-            if finished:
-                done.set()
+                if finished:
+                    done.set()
+
+                # Keep one ready dependent on this thread (chains stay
+                # in-thread, no executor round-trip); fan the rest out.
+                name = newly_ready.pop() if newly_ready else None
+                for dep in newly_ready:
+                    executor.submit(run, dep)
 
         # Snapshot the initial roots before submitting anything — once we
         # start submitting, workers begin decrementing `remaining` and the
         # naive iteration would re-pick targets that just became ready.
         roots = [name for name, n in remaining.items() if n == 0]
-        for name in roots:
+        # Main thread runs one root inline; others go to the pool.
+        for name in roots[1:]:
             executor.submit(run, name)
-
+        run(roots[0])
         done.wait()
 
     return results
