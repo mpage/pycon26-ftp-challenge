@@ -78,17 +78,14 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             dependents[dep.name].append(target)
 
     critical = _compute_critical(graph, dependents)
-
-    # Pre-sort dependents by critical path so to_submit[0] is highest priority.
-    for name in dependents:
-        dependents[name].sort(key=lambda t: critical[t.name], reverse=True)
+    dep_names = {name: [d.name for d in t.deps] for name, t in graph.targets.items()}
 
     remaining = [len(graph.targets)]
     done_event = threading.Event()
 
     def run(target) -> None:
         while target is not None:
-            dep_results = {d.name: results[d.name] for d in target.deps}
+            dep_results = {n: results[n] for n in dep_names[target.name]}
             result = target.build(dep_results)
             results[target.name] = result
             to_submit = []
@@ -102,9 +99,14 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             if is_done:
                 done_event.set()
             if to_submit:
-                for dep in to_submit[1:]:
-                    _POOL_QUEUE.put(dep)
-                target = to_submit[0]
+                if len(to_submit) == 1:
+                    target = to_submit[0]
+                else:
+                    inline = max(to_submit, key=lambda t: critical[t.name])
+                    for dep in to_submit:
+                        if dep is not inline:
+                            _POOL_QUEUE.put(dep)
+                    target = inline
             else:
                 target = None
 
