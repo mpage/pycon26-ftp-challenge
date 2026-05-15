@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/sadra/OpenSource/pycon26-ftp-challenge branch -a)",
+      "Bash(git *)",
+      "Bash(python3.14t *)",
+      "Bash(python3 *)",
+      "Bash(python challenge/harness.py submissions/sadrasabouri.py graphs/ --num-trials 3)"
+    ]
+  }
+}
