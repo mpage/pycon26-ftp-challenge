@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-15T19:48:13.539034+00:00",
+  "last_updated": "2026-05-15T19:56:53.433613+00:00",
   "baseline_time": 40.35119209007826,
   "entries": [
     {
@@ -17,11 +17,11 @@
     {
       "username": "albertchae",
       "display_name": "albertchae",
-      "median_time_seconds": 7.1491982218576595,
-      "speedup": "5.62",
+      "median_time_seconds": 6.9724451339570805,
+      "speedup": "5.83",
       "status": "valid",
-      "merged_at": "2026-05-15T19:48:02+00:00",
-      "num_runs": 1,
+      "merged_at": "2026-05-15T19:56:43+00:00",
+      "num_runs": 2,
       "pr_number": 9,
       "pr_url": "https://github.com/mpage/pycon26-ftp-challenge/pull/9",
       "is_meta": false
