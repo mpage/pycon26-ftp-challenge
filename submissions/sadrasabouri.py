@@ -8,7 +8,21 @@ Rules:
 - A target must not be built until all of its dependencies have completed.
 """
 
-from graph import BuildGraph
+from graph import BuildGraph, Target
+
+
+def my_smart_order(graph: BuildGraph) -> list[Target]:
+    """
+    My smart! way to order targets in the graph.
+
+    Args:
+        graph: The build graph to execute.
+    
+    Returns:
+        Optimized order for targets  
+    """
+    # TODO: make it better
+    return list(graph.targets.values())
 
 
 def build_all(graph: BuildGraph) -> dict[str, bytes]:
@@ -20,9 +34,9 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     Returns:
         A dict mapping target name to its build result (bytes).
     """
-    # order = topological_sort(graph)
+    order = my_smart_order(graph)
     results: dict[str, bytes] = {}
-    for target in graph.targets.values():
+    for target in order:
         dep_results = {d.name: results[d.name] for d in target.deps}
         results[target.name] = target.build(dep_results)
     return results
