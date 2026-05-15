@@ -17,6 +17,20 @@ shrinks to "extend deque + notify" only when there is something to push.
 Continuation: when a finished task uncovers k new ready targets, the
 worker keeps one for itself (next_i) and pushes only k-1 to the deque.
 This saves a deque hop and keeps cache-hot data in the same thread.
+
+Linear-chain fast path: pure-chain graphs (every node has at most one
+dep and at most one dependent, single root) skip thread setup entirely;
+iterating in one thread avoids lock + cond + dict overhead the threaded
+path otherwise pays for zero-parallelism input.
+
+Tried-and-rejected (kept here for the next maintainer): critical-path
+priority queue via heapq replaced the FIFO; on uniform-work benchmark
+graphs the priority gives no benefit, but the per-op O(log n) heap cost
+under cond produced a ~10x regression (2.92x -> 0.35x). Work-stealing
+per-worker deques replaced the single shared deque; at 8 cores the
+extra per-steal lock acquisitions and random shuffle overhead beat the
+contention savings (2.92x -> 2.58x). Both might shine on 24+ cores;
+neither was worth shipping without that bench.
 """
 
 from __future__ import annotations
@@ -50,20 +64,37 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     in_degree = [len(d) for d in deps_idx]
     results_arr: list[bytes | None] = [None] * n
 
+    initial_ready = [i for i, deps in enumerate(deps_idx) if not deps]
+
+    # Linear-chain fast path: every node has <= 1 dep and <= 1 dependent,
+    # and exactly one root. Threading buys nothing here; run inline.
+    if (
+        len(initial_ready) == 1
+        and all(len(deps) <= 1 for deps in deps_idx)
+        and all(len(deps) <= 1 for deps in dependents_idx)
+    ):
+        i = initial_ready[0]
+        dep_result: bytes | None = None
+        dep_name = ""
+        while True:
+            t = target_objs[i]
+            dep_results = {dep_name: dep_result} if dep_result is not None else {}
+            out = t.build(dep_results)
+            results_arr[i] = out
+            if not dependents_idx[i]:
+                break
+            dep_name = t.name
+            dep_result = out
+            i = dependents_idx[i][0]
+        return {names[i]: results_arr[i] for i in range(n)}  # type: ignore[misc]
+
     workers = max(2, os.cpu_count() or 4)
 
     data_lock = threading.Lock()
     cond = threading.Condition()
-    ready_q: deque[int] = deque()
+    ready_q: deque[int] = deque(initial_ready)
     completed = 0
     shutdown = False
-
-    # Seed targets with zero structural deps. Snapshot before any worker
-    # runs: checking live in_degree here would race with workers
-    # decrementing it to 0, causing duplicate submissions.
-    for i in range(n):
-        if not deps_idx[i]:
-            ready_q.append(i)
 
     def worker() -> None:
         nonlocal completed, shutdown
@@ -79,27 +110,29 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             while i is not None:
                 t = target_objs[i]
                 # Reading results_arr[j] without a lock is safe: this
-                # target only ran because all its deps' decrements landed
-                # under data_lock after each dep wrote its result. The
-                # cond.acquire/release between submit and pop establishes
-                # happens-before for queued work; the tail-call path
-                # stays in one thread and needs no synchronization.
+                # target only ran because all its deps' decrements
+                # landed under data_lock after each dep wrote its
+                # result. The cond.acquire/release between push and pop
+                # establishes happens-before for queued work; the tail-
+                # call path stays in one thread and needs no extra sync.
                 dep_results = {
                     target_objs[j].name: results_arr[j]  # type: ignore[misc]
                     for j in deps_idx[i]
                 }
                 out = t.build(dep_results)
                 next_i: int | None = None
-                pushed: list[int] = []
+                pushed: list[int] | None = None
                 is_done = False
+                results_arr[i] = out
                 with data_lock:
-                    results_arr[i] = out
                     for j in dependents_idx[i]:
                         in_degree[j] -= 1
                         if in_degree[j] == 0:
                             if next_i is None:
                                 next_i = j
                             else:
+                                if pushed is None:
+                                    pushed = []
                                 pushed.append(j)
                     completed += 1
                     if completed == n:
@@ -119,9 +152,6 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     ]
     for th in threads:
         th.start()
-    # Seed queue was filled before threads started; the first cond.wait()
-    # call inside a worker re-checks the deque after acquiring the lock,
-    # so no separate initial notify is needed.
     for th in threads:
         th.join()
 
