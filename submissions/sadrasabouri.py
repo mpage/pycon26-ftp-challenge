@@ -94,7 +94,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                 return
             run(item)
 
-    num_workers = min(64, (os.cpu_count() or 1) * 2)
+    num_workers = min(128, (os.cpu_count() or 1) * 3)
     threads = [threading.Thread(target=worker, daemon=True) for _ in range(num_workers)]
     for t in threads:
         t.start()
