@@ -53,6 +53,11 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
 
     critical = _compute_critical(graph, dependents)
 
+    # Pre-sort each dependents list by critical path descending so to_submit[0]
+    # is always the highest-priority ready task — avoids max() call in the hot path.
+    for name in dependents:
+        dependents[name].sort(key=lambda t: critical[t.name], reverse=True)
+
     remaining = [len(graph.targets)]
     done_event = threading.Event()
 
@@ -75,14 +80,10 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             if is_done:
                 done_event.set()
             if to_submit:
-                if len(to_submit) == 1:
-                    target = to_submit[0]
-                else:
-                    inline = max(to_submit, key=lambda t: critical[t.name])
-                    for dep in to_submit:
-                        if dep is not inline:
-                            work_q.put(dep)
-                    target = inline
+                # to_submit[0] is highest-priority (dependents are pre-sorted)
+                for dep in to_submit[1:]:
+                    work_q.put(dep)
+                target = to_submit[0]
             else:
                 target = None
 
