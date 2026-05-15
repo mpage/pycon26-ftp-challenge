@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-15T17:06:56.215444+00:00",
+  "last_updated": "2026-05-15T17:14:48.039360+00:00",
   "baseline_time": 40.501947514130734,
   "entries": [
     {
@@ -9,7 +9,7 @@
       "speedup": "5.55",
       "status": "valid",
       "merged_at": "2026-05-15T17:06:43+00:00",
-      "num_runs": 18,
+      "num_runs": 19,
       "pr_number": 4,
       "pr_url": "https://github.com/mpage/pycon26-ftp-challenge/pull/4",
       "is_meta": true
