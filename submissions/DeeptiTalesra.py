@@ -1,8 +1,8 @@
 """Parallel build scheduler with critical-path scheduling and inline chaining."""
 
-import _thread
 import os
 import queue
+import threading
 
 from graph import BuildGraph, Target
 
@@ -79,7 +79,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     for t in initial:
         q.put(t)
 
-    lock = _thread.allocate_lock()
+    lock = threading.Lock()
     completed = 0
 
     def worker():
@@ -134,14 +134,15 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
 
                 t = inline
 
-    handles = []
+    threads = []
     for _ in range(num_workers - 1):
-        h = _thread.start_joinable_thread(worker)
-        handles.append(h)
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        threads.append(t)
 
     worker()
 
-    for h in handles:
-        _thread.join_thread(h)
+    for t in threads:
+        t.join()
 
     return {target_list[i].name: results[i] for i in range(n)}
