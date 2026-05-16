@@ -25,35 +25,95 @@ gc.disable()
 _REACHED_ZERO = 1
 
 if sys.platform == 'darwin':
-    _atomic_dec = ctypes.CDLL('/usr/lib/libSystem.B.dylib').OSAtomicDecrement64Barrier
+    _libSystem = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+
+    _atomic_dec = _libSystem.OSAtomicDecrement64Barrier
     _atomic_dec.argtypes = [ctypes.POINTER(ctypes.c_int64)]
     _atomic_dec.restype = ctypes.c_int64
     _REACHED_ZERO = 0
 
+    _os_atomic_add = _libSystem.OSAtomicAdd64Barrier
+    _os_atomic_add.argtypes = [ctypes.c_int64, ctypes.POINTER(ctypes.c_int64)]
+    _os_atomic_add.restype = ctypes.c_int64
+
     class AtomicInt:
         __slots__ = ('_val', '_ref')
 
-        def __init__(self, value: int):
+        def __init__(self, value: int, order: int = 0):
             self._val = ctypes.c_int64(value)
             self._ref = ctypes.byref(self._val)
 
         def dec(self) -> int:
             return _atomic_dec(self._ref)
+
+    class LockFreeQueue:
+        __slots__ = ('_data', '_flags', '_head', '_head_ref', '_tail', '_tail_ref')
+
+        def __init__(self, capacity):
+            self._data = [None] * capacity
+            self._flags = (ctypes.c_int64 * capacity)()
+            self._head = ctypes.c_int64(0)
+            self._tail = ctypes.c_int64(0)
+            self._head_ref = ctypes.byref(self._head)
+            self._tail_ref = ctypes.byref(self._tail)
+
+        def push(self, item):
+            idx = _os_atomic_add(1, self._tail_ref) - 1
+            self._data[idx] = item
+            self._flags[idx] = 1
+
+        def pop(self):
+            idx = _os_atomic_add(1, self._head_ref) - 1
+            while self._flags[idx] == 0:
+                pass
+            return self._data[idx]
+
 else:
-    _atomic_fetch_sub = ctypes.CDLL('libatomic.so.1').__atomic_fetch_sub_8
+    _libatomic = ctypes.CDLL('libatomic.so.1')
+
+    _atomic_fetch_sub = _libatomic.__atomic_fetch_sub_8
     _atomic_fetch_sub.argtypes = [ctypes.POINTER(ctypes.c_int64), ctypes.c_int64, ctypes.c_int]
     _atomic_fetch_sub.restype = ctypes.c_int64
-    _SEQ_CST = 5
+
+    _atomic_fetch_add = _libatomic.__atomic_fetch_add_8
+    _atomic_fetch_add.argtypes = [ctypes.POINTER(ctypes.c_int64), ctypes.c_int64, ctypes.c_int]
+    _atomic_fetch_add.restype = ctypes.c_int64
+
+    _RELAXED = 0
+    _ACQ_REL = 4
 
     class AtomicInt:
-        __slots__ = ('_val', '_ref')
+        __slots__ = ('_val', '_ref', '_order')
 
-        def __init__(self, value: int):
+        def __init__(self, value: int, order: int = _ACQ_REL):
             self._val = ctypes.c_int64(value)
             self._ref = ctypes.byref(self._val)
+            self._order = order
 
         def dec(self) -> int:
-            return _atomic_fetch_sub(self._ref, 1, _SEQ_CST)
+            return _atomic_fetch_sub(self._ref, 1, self._order)
+
+    class LockFreeQueue:
+        __slots__ = ('_data', '_flags', '_head', '_head_ref', '_tail', '_tail_ref')
+
+        def __init__(self, capacity):
+            self._data = immortalize([None] * capacity)
+            self._flags = immortalize((ctypes.c_int64 * capacity)())
+            self._head = immortalize(ctypes.c_int64(0))
+            self._tail = immortalize(ctypes.c_int64(0))
+            self._head_ref = immortalize(ctypes.byref(self._head))
+            self._tail_ref = immortalize(ctypes.byref(self._tail))
+
+        def push(self, item):
+            idx = _atomic_fetch_add(self._tail_ref, 1, _RELAXED)
+            self._data[idx] = item
+            self._flags[idx] = 1
+
+        def pop(self):
+            idx = _atomic_fetch_add(self._head_ref, 1, _RELAXED)
+            while self._flags[idx] == 0:
+                pass
+            return self._data[idx]
 
 
 def immortalize[T](obj: T) -> T:
@@ -91,7 +151,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             dependents[dep.name].append(name)
 
     results: dict[str, bytes] = immortalize({})
-    remaining = AtomicInt(len(targets))
+    remaining = immortalize(AtomicInt(len(targets), 0))
 
     # Pre-compute source data for all targets in parallel
     _original_make_source_data = Target._make_source_data
@@ -145,19 +205,18 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             sorted_dep_names[name] = immortalize(sorted(dep.name for dep in target.deps))
             pending[name] = immortalize(AtomicInt(len(target.deps)))
 
-    ready = immortalize([])
+    ready = immortalize(LockFreeQueue(len(targets) + NUM_WORKERS))
     sem = immortalize(Semaphore(0))
     for name in targets:
         if in_degree[name] == 0:
-            ready.append(name)
+            ready.push(name)
             sem.release()
 
     def build_target() -> None:
         while True:
             sem.acquire()
-            try:
-                name = ready.pop()
-            except IndexError:
+            name = ready.pop()
+            if name is None:
                 return
             target = targets[name]
             if name in sorted_dep_names:
@@ -170,12 +229,13 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
 
             for child in dependents[name]:
                 dep_results_for[child][name] = result
-                if pending[child].dec() == _REACHED_ZERO:
-                    ready.append(child)
+                if pending[child].dec() is _REACHED_ZERO:
+                    ready.push(child)
                     sem.release()
 
-            if remaining.dec() == _REACHED_ZERO:
+            if remaining.dec() is _REACHED_ZERO:
                 for _ in range(NUM_WORKERS - 1):
+                    ready.push(None)
                     sem.release()
                 return
 
