@@ -68,8 +68,8 @@ def build_all(graph: BuildGraph):
             for child in downstreams[name]:
                 in_deg[child] -= 1
                 if in_deg[child] == 0:
-                    release()
                     put(child)
+                    release()
                     acquire()
             release()
 
