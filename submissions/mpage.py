@@ -101,15 +101,10 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             else:
                 target = _queue.get()
 
-    threads = []
     for _ in range(NUM_WORKERS - 1):
         t = threading.Thread(target=worker, daemon=True)
         t.start()
-        threads.append(t)
 
     worker()
-
-    for t in threads:
-        t.join()
 
     return results
