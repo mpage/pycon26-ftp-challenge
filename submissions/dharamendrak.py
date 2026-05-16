@@ -142,24 +142,31 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                     # provides the publish barrier for other workers.
                     _results[name] = target.build(dep_results)
 
-                    inline_next = None
+                    # Collect newly-ready children under the lock; enqueue
+                    # them afterwards so the queue's lock isn't taken while
+                    # we still hold the main lock.
+                    new_ready: list[str] = []
+                    done_flag = False
                     with _lock:
                         pending -= 1
                         if pending == 0:
-                            for _ in range(_nworkers - 1):
-                                _ready_put(None)
-                            return
-                        for child in _dependents[name]:
-                            _remaining[child] -= 1
-                            if _remaining[child] == 0:
-                                if inline_next is None:
-                                    inline_next = child
-                                else:
-                                    _ready_put(child)
+                            done_flag = True
+                        else:
+                            for child in _dependents[name]:
+                                _remaining[child] -= 1
+                                if _remaining[child] == 0:
+                                    new_ready.append(child)
 
-                    if inline_next is None:
+                    if done_flag:
+                        for _ in range(_nworkers - 1):
+                            _ready_put(None)
+                        return
+                    if not new_ready:
                         break
-                    name = inline_next
+                    # Inline the first; queue the rest for other workers.
+                    for c in new_ready[1:]:
+                        _ready_put(c)
+                    name = new_ready[0]
 
     threads = [threading.Thread(target=worker) for _ in range(num_workers - 1)]
     for t in threads:
