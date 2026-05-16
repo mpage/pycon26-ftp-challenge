@@ -7,11 +7,16 @@ import os
 import sys
 import threading
 from collections import deque
+try:
+    from contextvars import Context
+except ImportError:  # pragma: no cover
+    Context = None  # type: ignore[assignment]
 
 from graph import BuildGraph, Target
 
 MAX_WORKERS = 24
 _EMPTY_RESULTS: dict[str, bytes] = {}
+_THREAD_CONTEXT_KWARGS: dict[str, object] | None = None
 
 
 class _WorkQueue:
@@ -46,6 +51,26 @@ class _WorkQueue:
 def _gil_enabled() -> bool:
     checker = getattr(sys, "_is_gil_enabled", None)
     return bool(checker()) if checker is not None else True
+
+
+def _thread_kwargs() -> dict[str, object]:
+    global _THREAD_CONTEXT_KWARGS
+    kwargs = _THREAD_CONTEXT_KWARGS
+    if kwargs is not None:
+        return kwargs
+
+    if Context is None:
+        kwargs = {}
+    else:
+        try:
+            threading.Thread(target=lambda: None, context=Context())
+        except TypeError:
+            kwargs = {}
+        else:
+            kwargs = {"context": Context()}
+
+    _THREAD_CONTEXT_KWARGS = kwargs
+    return kwargs
 
 
 def _serial_build(
@@ -211,7 +236,11 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         gc.disable()
     try:
         queue.put_many(roots)
-        threads = [threading.Thread(target=worker) for _ in range(workers - 1)]
+        thread_kwargs = _thread_kwargs()
+        threads = [
+            threading.Thread(target=worker, **thread_kwargs)
+            for _ in range(workers - 1)
+        ]
         for thread in threads:
             thread.start()
         worker()
