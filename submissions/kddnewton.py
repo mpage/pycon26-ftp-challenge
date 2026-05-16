@@ -77,10 +77,9 @@ def build_all(graph: BuildGraph):
                             if in_degree[dependent] == 0:
                                 ready.put(dependent)
 
-        handles = [_thread.start_joinable_thread(worker, daemon=True) for _ in range(NUM_WORKERS - 1)]
+        for _ in range(NUM_WORKERS - 1):
+            _thread.start_joinable_thread(worker, daemon=True)
         worker()
-        for handle in handles:
-            handle.join()
     else:
         name = ready.get()
         results[name] = targets[name].build({})
