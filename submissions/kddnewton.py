@@ -1,6 +1,6 @@
+import _thread
 import queue
 import threading
-import heapq
 
 from graph import BuildGraph
 
@@ -11,33 +11,29 @@ def build_all(graph: BuildGraph):
     targets = graph.targets
     remaining = len(targets)
 
-    heap = []
     ready = queue.SimpleQueue()
 
     in_degree = {name: len(target.deps) for name, target in targets.items()}
     dependents = {name: [] for name in targets}
-    empty_deps = {}
-
     for name, target in targets.items():
         if (deps := target.deps):
             for dep in deps:
                 dependents[dep.name].append(name)
         else:
-            heapq.heappush(heap, (-target.work, name))
+            ready.put(name)
 
     results = {}
 
     max_fan_in = max(in_degree.values())
-    max_fan_out = max((len(v) for v in dependents.values()), default=0)
+    max_fan_out = max((len(value) for value in dependents.values()), default=0)
 
-    if len(heap) > 1 or max_fan_out > 1:
+    if ready.qsize() > 1 or max_fan_out > 1:
         lock = threading.Lock()
-
-        while heap:
-            _, name = heapq.heappop(heap)
-            ready.put(name)
+        heap = []
 
         if max_fan_in > NUM_WORKERS and max_fan_out > NUM_WORKERS:
+            import heapq
+
             def worker():
                 nonlocal remaining
                 while True:
@@ -45,7 +41,7 @@ def build_all(graph: BuildGraph):
                         return
 
                     target = targets[name]
-                    results[name] = target.build({dep.name: results[dep.name] for dep in target.deps} if target.deps else empty_deps)
+                    results[name] = target.build({dep.name: results[dep.name] for dep in target.deps})
 
                     with lock:
                         remaining -= 1
@@ -68,7 +64,7 @@ def build_all(graph: BuildGraph):
                         return
 
                     target = targets[name]
-                    results[name] = target.build({dep.name: results[dep.name] for dep in target.deps} if target.deps else empty_deps)
+                    results[name] = target.build({dep.name: results[dep.name] for dep in target.deps})
 
                     with lock:
                         remaining -= 1
@@ -81,14 +77,12 @@ def build_all(graph: BuildGraph):
                             if in_degree[dependent] == 0:
                                 ready.put(dependent)
 
-        threads = [threading.Thread(target=worker) for _ in range(NUM_WORKERS - 1)]
-        for thread in threads:
-            thread.start()
+        handles = [_thread.start_joinable_thread(worker, daemon=True) for _ in range(NUM_WORKERS - 1)]
         worker()
-        for thread in threads:
-            thread.join()
+        for handle in handles:
+            handle.join()
     else:
-        _, name = heap[0]
+        name = ready.get()
         results[name] = targets[name].build({})
 
         for _ in range(remaining - 1):
