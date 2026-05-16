@@ -9,65 +9,60 @@ NUM_WORKERS = 24
 
 def build_all(graph: BuildGraph):
     targets = graph.targets
-    n = len(targets)
-    in_degree = [0] * n
-    dependents = [None] * n
-    ready = queue.SimpleQueue()
-    dep_info = [None] * n
+    remaining = len(targets)
     has_parallelism = False
 
-    for i, target in enumerate(target_list := list(targets.values())):
-        target._id = i
-        if target.deps:
-            in_degree[i] = len(target.deps)
-            dep_info[i] = [(dep.name, dep._id) for dep in target.deps]
-            for dep in target.deps:
-                dep_id = dep._id
-                if dependents[dep_id] is None:
-                    dependents[dep_id] = [i]
-                else:
-                    if not has_parallelism:
-                        has_parallelism = True
-                    dependents[dep_id].append(i)
+    ready = queue.SimpleQueue()
+    in_degree = {name: 0 for name in targets}
+    dependents = {name: [] for name in targets}
+    empty_deps = {}
+
+    for name, target in targets.items():
+        if (deps := target.deps):
+            in_degree[name] = len(deps)
+            for dep in deps:
+                if not has_parallelism and dependents[dep.name]:
+                    has_parallelism = True
+                dependents[dep.name].append(name)
         else:
-            dep_info[i] = ()
             if not has_parallelism and not ready.empty():
                 has_parallelism = True
-            ready.put(i)
+            ready.put(name)
+
+    results = {}
 
     if has_parallelism:
-        results = [None] * n
         lock = threading.Lock()
-        done = threading.Event()
+        sentinel = None
 
         def worker():
-            nonlocal n
-            while (tid := ready.get()) != -1:
-                results[tid] = target_list[tid].build(
-                    {name: results[idx] for name, idx in dep_info[tid]}
-                )
+            nonlocal remaining
+            while True:
+                if (name := ready.get()) is sentinel:
+                    return
+
+                target = targets[name]
+                results[name] = target.build({dep.name: results[dep.name] for dep in target.deps} if target.deps else empty_deps)
 
                 with lock:
-                    n -= 1
-                    if n == 0:
-                        done.set()
+                    remaining -= 1
+                    if remaining == 0:
                         for _ in range(NUM_WORKERS - 1):
-                            ready.put(-1)
+                            ready.put(sentinel)
                         return
-                    succs = dependents[tid]
-                    if succs:
-                        for succ_id in succs:
-                            in_degree[succ_id] -= 1
-                            if in_degree[succ_id] == 0:
-                                ready.put(succ_id)
+                    for dependent in dependents[name]:
+                        in_degree[dependent] -= 1
+                        if in_degree[dependent] == 0:
+                            ready.put(dependent)
 
-        for _ in range(NUM_WORKERS):
-            _thread.start_joinable_thread(worker, daemon=True)
-        done.wait()
+        handles = [_thread.start_joinable_thread(worker, daemon=True) for _ in range(NUM_WORKERS)]
+        for handle in handles:
+            handle.join()
     else:
-        results = [None] * n
-        result = target_list[tid := ready.get()].build({})
-        for _ in range(n - 1):
-            results[tid] = result
-            name, idx = dep_info[tid := dependents[tid][0]][0]
-            result = target_list[tid].build({name: results[idx]})
+        name = ready.get()
+        results[name] = targets[name].build({})
+
+        for _ in range(remaining - 1):
+            dependent = dependents[name][0]
+            results[dependent] = targets[dependent].build({name: results[name]})
+            name = dependent
