@@ -50,13 +50,15 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     max_fanout = 0
     max_indeg = 0
     for t in targets.values():
-        # Sort dependents by work descending: LPT heuristic. On wide
-        # fanouts, this makes the current worker pick the heaviest as its
-        # inline next_target, and other workers pop heaviest-first from
-        # the deque. Minimizes makespan for diamond-style join/expand.
-        t._dependents = tuple(sorted(t._dependents, key=lambda d: -d.work))
-        if len(t._dependents) > max_fanout:
-            max_fanout = len(t._dependents)
+        d_list = t._dependents
+        if len(d_list) > 1:
+            # LPT heuristic: pop heaviest first to minimize per-level
+            # makespan on wide fanouts. Skip the sort for trivial lists
+            # so we don't pay it on tree/chain-like graphs.
+            d_list.sort(key=lambda d: -d.work)
+        t._dependents = tuple(d_list)
+        if len(d_list) > max_fanout:
+            max_fanout = len(d_list)
         if len(t._dep_objs) > max_indeg:
             max_indeg = len(t._dep_objs)
 
