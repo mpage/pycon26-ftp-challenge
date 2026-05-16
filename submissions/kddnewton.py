@@ -10,35 +10,27 @@ NUM_WORKERS = 24
 def build_all(graph: BuildGraph):
     targets = graph.targets
     remaining = len(targets)
-    has_parallelism = False
-
     ready = queue.SimpleQueue()
-    in_degree = {name: 0 for name in targets}
+    in_degree = {name: len(target.deps) for name, target in targets.items()}
     dependents = {name: [] for name in targets}
     empty_deps = {}
 
     for name, target in targets.items():
         if (deps := target.deps):
-            in_degree[name] = len(deps)
             for dep in deps:
-                if not has_parallelism and dependents[dep.name]:
-                    has_parallelism = True
                 dependents[dep.name].append(name)
         else:
-            if not has_parallelism and not ready.empty():
-                has_parallelism = True
             ready.put(name)
 
     results = {}
 
-    if has_parallelism:
+    if ready.qsize() > 1 or any(len(value) > 1 for value in dependents.values()):
         lock = threading.Lock()
-        sentinel = None
 
         def worker():
             nonlocal remaining
             while True:
-                if (name := ready.get()) is sentinel:
+                if (name := ready.get()) is None:
                     return
 
                 target = targets[name]
@@ -48,7 +40,7 @@ def build_all(graph: BuildGraph):
                     remaining -= 1
                     if remaining == 0:
                         for _ in range(NUM_WORKERS - 1):
-                            ready.put(sentinel)
+                            ready.put(None)
                         return
                     for dependent in dependents[name]:
                         in_degree[dependent] -= 1
