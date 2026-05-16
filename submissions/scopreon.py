@@ -91,3 +91,4 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         worker()
     gc.enable()
     return results
+
