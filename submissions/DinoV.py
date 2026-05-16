@@ -153,26 +153,6 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     results: dict[str, bytes] = immortalize({})
     remaining = immortalize(AtomicInt(len(targets), 0))
 
-    # Pre-compute source data for all targets in parallel
-    _original_make_source_data = Target._make_source_data
-    source_queue = immortalize(list(targets.values()))
-
-    def precompute_sources():
-        while True:
-            try:
-                t = source_queue.pop()
-            except IndexError:
-                return
-            t._cached_source = _original_make_source_data(t)
-
-    precompute_threads = []
-    for _ in range(NUM_WORKERS):
-        t = Thread(target=precompute_sources)
-        t.start()
-        precompute_threads.append(t)
-
-    Target._make_source_data = lambda self: self._cached_source
-
     is_chain = all(len(t.deps) <= 1 for t in targets.values())
     if is_chain:
         order = []
@@ -185,14 +165,11 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                 if in_degree[child] == 1:
                     order.append(child)
                     break
-        for t in precompute_threads:
-            t.join()
         dep_results = {}
         for name in order:
             results[name] = targets[name].build(dep_results)
             dep_results.clear()
             dep_results[name] = results[name]
-        Target._make_source_data = _original_make_source_data
         return results
 
     # Pre-allocate dep_results dicts and atomic pending counts
@@ -239,8 +216,6 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                     sem.release()
                 return
 
-    for t in precompute_threads:
-        t.join()
     threads = []
     for i in range(NUM_WORKERS):
         t = Thread(target=build_target)
@@ -250,5 +225,4 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     for t in threads:
         t.join()
 
-    Target._make_source_data = _original_make_source_data
     return results
