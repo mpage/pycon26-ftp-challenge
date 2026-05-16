@@ -13,16 +13,20 @@ def build_all(graph: BuildGraph):
     in_deg = {name: len(target.deps) for name, target in targets.items()}
     downstreams = {name: [] for name in targets}
 
+    initial = []
     for name, target in targets.items():
-        for dep in target.deps:
-            downstreams[dep.name].append(name)
+        if not target.deps:
+            initial.append(name)
+        else:
+            for dep in target.deps:
+                downstreams[dep.name].append(name)
+    initial.sort(key=lambda name: targets[name].work, reverse=True)
 
     results = {}
     q = queue.SimpleQueue()
     put = q.put
-    for name, deg in in_deg.items():
-        if deg == 0:
-            put(name)
+    for name in initial:
+        put(name)
 
     # Chain fast path
     if q.qsize() == 1 and all(d <= 1 for d in in_deg.values()):
