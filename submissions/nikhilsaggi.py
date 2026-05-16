@@ -5,6 +5,7 @@ import threading
 
 from graph import BuildGraph
 
+_SENTINEL = object()
 NUM_WORKERS = 24
 
 
@@ -28,6 +29,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     dependents: dict[str, list[str]] = {name: [] for name in targets}
     for name, target in targets.items():
         for dep in target.deps:
+            # Add parent's name as a dependent for child
             dependents[dep.name].append(name)
 
     roots = [name for name, count in remaining.items() if count == 0]
@@ -50,7 +52,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     results: dict[str, bytes] = {}
     lock = threading.Lock()
     pending = n_total
-    ready: queue.SimpleQueue[str | None] = queue.SimpleQueue()
+    ready: queue.SimpleQueue = queue.SimpleQueue()
 
     for name in roots:
         ready.put(name)
@@ -61,7 +63,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         nonlocal pending
 
         name = ready.get()
-        while name is not None:
+        while name is not _SENTINEL:
             target = targets[name]
             dep_results = {dep.name: results[dep.name] for dep in target.deps}
             result = target.build(dep_results)
@@ -73,7 +75,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                 pending -= 1
                 if pending == 0:
                     for _ in range(n_workers):
-                        ready.put(None)
+                        ready.put(_SENTINEL)
                 else:
                     for child in dependents[name]:
                         remaining[child] -= 1
