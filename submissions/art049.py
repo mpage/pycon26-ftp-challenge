@@ -3,23 +3,20 @@
 Strategy:
 - 24 long-lived worker threads. Free-threaded Python 3.14t removes the
   GIL, so CPU-bound Target.build() calls actually run in parallel.
-- Per-target state stored as Target instance attributes (`_my_result`,
-  `_rem_deps`, `_dependents`, `_dep_objs`). No shared scheduling dicts:
-  in FT mode each shared dict carries a per-object mutex, and a single
-  hot one becomes the bottleneck.
-- A single sched_lock + Condition guards the ready deque, the dep
-  counters, and the remaining counter. Critical section per task is
-  just: dec deps, push extras (if any), dec remaining, notify.
-- Inline next-task fast path: the first newly-ready successor (the
-  heaviest under LPT ordering) stays on the same thread. Saves a
-  cv-wait+wakeup pair per chain step.
-- LPT ordering: dependents are pre-sorted by work descending so the
-  current worker picks the heaviest as its inline next and other
-  workers pop heaviest-first from the deque. Reduces makespan on wide
-  fanouts (e.g. diamond's expand levels). Skip the sort for trivial
-  lists so tree-shaped graphs don't pay it.
-- Sequential fast-path: chain-like graphs (in-deg ≤ 1 AND fan-out ≤ 1)
-  skip thread spawn entirely and run on the calling thread.
+- Per-target state on Target instances (`_my_result`, `_rem_deps`,
+  `_dependents`, `_dep_objs`). No shared scheduling dicts.
+- A single sched_lock + Condition. Critical section per task: dep
+  decrements, push extras (if any), dec remaining, notify.
+- Inline next-task fast path: the first newly-ready successor stays
+  on the same thread. Saves a cv-wait+wakeup pair per chain step.
+- LPT ordering of dependents (descending by work) — sorted lazily,
+  only for targets that actually have multiple dependents. Helps wide
+  fanouts (e.g. diamond's expand levels).
+- Sequential fast-path for chain-like graphs (every target has
+  in-deg ≤ 1 AND fan-out ≤ 1): walk on the calling thread.
+- Setup keeps a tight loop: build dependents lists once, track whether
+  any high-fanout / high-indeg target exists, and only sort when there
+  is something to sort. Tree-shaped graphs skip the sort pass entirely.
 """
 
 from __future__ import annotations
@@ -36,28 +33,26 @@ NUM_WORKERS = 24
 def build_all(graph: BuildGraph) -> dict[str, bytes]:
     targets = graph.targets
 
+    any_high_indeg = False
     for t in targets.values():
         t._rem_deps = len(t.deps)
         t._dependents = []
-        t._dep_objs = tuple(t.deps)
+        t._dep_objs = t.deps
         t._my_result = None
+        if t._rem_deps > 1:
+            any_high_indeg = True
+
+    any_high_fanout = False
     for t in targets.values():
         for dep in t.deps:
-            dep._dependents.append(t)
-    max_fanout = 0
-    max_indeg = 0
-    for t in targets.values():
-        d_list = t._dependents
-        if len(d_list) > 1:
-            d_list.sort(key=lambda d: -d.work)
-        t._dependents = tuple(d_list)
-        if len(d_list) > max_fanout:
-            max_fanout = len(d_list)
-        if len(t._dep_objs) > max_indeg:
-            max_indeg = len(t._dep_objs)
+            d_dep = dep._dependents
+            d_dep.append(t)
+            if len(d_dep) > 1:
+                any_high_fanout = True
 
-    # Chain-like: walk topologically on the calling thread.
-    if max_fanout <= 1 and max_indeg <= 1:
+    # Chain-like graphs (every target has in-deg ≤ 1 AND fan-out ≤ 1)
+    # have zero parallelism; skip threading entirely.
+    if not any_high_indeg and not any_high_fanout:
         results: dict[str, bytes] = {}
         q = deque(t for t in targets.values() if t._rem_deps == 0)
         while q:
@@ -70,13 +65,22 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                     q.append(nxt)
         return results
 
+    # LPT-sort only the dependents lists that actually have >1 entries.
+    # Tree-shaped graphs (max fan-out = 1) skip this entire pass.
+    if any_high_fanout:
+        for t in targets.values():
+            d_list = t._dependents
+            if len(d_list) > 1:
+                d_list.sort(key=lambda d: -d.work)
+
     ready: deque = deque()
     sched_lock = threading.Lock()
     sched_cv = threading.Condition(sched_lock)
     remaining = [len(targets)]
 
     initial = [t for t in targets.values() if t._rem_deps == 0]
-    initial.sort(key=lambda t: -t.work)
+    if len(initial) > 1:
+        initial.sort(key=lambda t: -t.work)
     ready.extend(initial)
 
     def worker():
