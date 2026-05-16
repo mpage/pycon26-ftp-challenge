@@ -2,7 +2,7 @@
 
 Strategy:
 - Spawn NUM_WORKERS threads (24, matching the eval machine's core count).
-  Free-threaded Python 3.14t/3.15t removes the GIL, so the CPU-bound
+  Free-threaded Python 3.14t removes the GIL, so the CPU-bound
   Target.build() calls actually run in parallel.
 - Each Target keeps its own scheduling state as instance attributes
   (`_my_result`, `_rem_deps`, `_dependents`, `_dep_objs`). No shared
@@ -13,10 +13,16 @@ Strategy:
   remaining-target counter — tiny in walltime.
 - Inline next-task fast path: when a finished target enables exactly one
   successor, the same worker runs it immediately. Saves a cvwait+wakeup
-  pair per chain step (~50us each on macOS pthreads).
-- Extras (>1 newly-ready) get pushed onto the deque. Use notify_all when
-  there are many; cheaper than repeated notify() once the wake count is
-  large enough.
+  pair per chain step.
+- LPT ordering: dependents are pre-sorted by work descending. On wide
+  fanouts (e.g. diamond's expand levels), this dispatches the heaviest
+  task first, minimizing the per-level makespan.
+- Sequential fast-path: if the graph has no parallelism (every target
+  has ≤1 predecessor AND ≤1 successor — chain-like), skip threading and
+  walk the topological order on the calling thread. Avoids thread spawn
+  + handoff overhead on graphs where threading can't help.
+- Extras notification: notify_all when many extras become ready, else
+  individual notify() per added task.
 """
 
 from __future__ import annotations
@@ -41,8 +47,34 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     for t in targets.values():
         for dep in t.deps:
             dep._dependents.append(t)
+    max_fanout = 0
+    max_indeg = 0
     for t in targets.values():
-        t._dependents = tuple(t._dependents)
+        # Sort dependents by work descending: LPT heuristic. On wide
+        # fanouts, this makes the current worker pick the heaviest as its
+        # inline next_target, and other workers pop heaviest-first from
+        # the deque. Minimizes makespan for diamond-style join/expand.
+        t._dependents = tuple(sorted(t._dependents, key=lambda d: -d.work))
+        if len(t._dependents) > max_fanout:
+            max_fanout = len(t._dependents)
+        if len(t._dep_objs) > max_indeg:
+            max_indeg = len(t._dep_objs)
+
+    # Chain-like graphs (every target has at most one predecessor AND one
+    # successor) have zero parallelism; thread spawn + sched_cv handoff
+    # only adds overhead. Walk the topological order on the calling thread.
+    if max_fanout <= 1 and max_indeg <= 1:
+        results: dict[str, bytes] = {}
+        q = deque(t for t in targets.values() if t._rem_deps == 0)
+        while q:
+            t = q.popleft()
+            dep_results = {d.name: results[d.name] for d in t._dep_objs}
+            results[t.name] = t.build(dep_results)
+            for nxt in t._dependents:
+                nxt._rem_deps -= 1
+                if nxt._rem_deps == 0:
+                    q.append(nxt)
+        return results
 
     ready: deque = deque()
     sched_lock = threading.Lock()
