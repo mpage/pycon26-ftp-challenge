@@ -35,11 +35,12 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         name = roots[0]
         while True:
             target = targets[name]
-            dep_results = (
-                {dep.name: results[dep.name] for dep in target.deps}
-                if target.deps
-                else {}
-            )
+            deps = target.deps
+            if deps:
+                dep = deps[0]
+                dep_results = {dep.name: results[dep.name]}
+            else:
+                dep_results = {}
             results[name] = target.build(dep_results)
 
             children = dependents[name]
@@ -67,11 +68,14 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                 return
 
             target = targets[name]
-            dep_results = (
-                {dep.name: results[dep.name] for dep in target.deps}
-                if target.deps
-                else empty_deps
-            )
+            deps = target.deps
+            if not deps:
+                dep_results = empty_deps
+            elif len(deps) == 1:
+                dep = deps[0]
+                dep_results = {dep.name: results[dep.name]}
+            else:
+                dep_results = {dep.name: results[dep.name] for dep in deps}
             result = target.build(dep_results)
 
             with lock:
