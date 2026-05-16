@@ -31,19 +31,33 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     if total == 0:
         return {}
 
-    remaining = {name: len(t.deps) for name, t in targets.items()}
-    dependents: dict[str, list[str]] = {name: [] for name in targets}
-    for name, target in targets.items():
-        for dep in target.deps:
-            dependents[dep.name].append(name)
-
-    roots = [name for name, count in remaining.items() if count == 0]
     results: dict[str, bytes] = {}
     empty_deps: dict[str, bytes] = {}
 
-    # Chain fast-path.
-    if len(roots) == 1 and all(len(c) <= 1 for c in dependents.values()):
-        name = roots[0]
+    # Fast chain detection: single pass, early exit. Avoid building the full
+    # dependents dict for chain graphs (saves ~10ms on the 5k-target chain).
+    chain_successor: dict[str, str] = {}
+    chain_root: str | None = None
+    is_chain = True
+    for name, target in targets.items():
+        deps = target.deps
+        if len(deps) == 0:
+            if chain_root is not None:
+                is_chain = False
+                break
+            chain_root = name
+        elif len(deps) == 1:
+            dep_name = deps[0].name
+            if dep_name in chain_successor:
+                is_chain = False
+                break
+            chain_successor[dep_name] = name
+        else:
+            is_chain = False
+            break
+
+    if is_chain and chain_root is not None:
+        name = chain_root
         while True:
             target = targets[name]
             dep_results = (
@@ -51,10 +65,18 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                 if target.deps else empty_deps
             )
             results[name] = target.build(dep_results)
-            children = dependents[name]
-            if not children:
+            next_name = chain_successor.get(name)
+            if next_name is None:
                 return results
-            name = children[0]
+            name = next_name
+
+    # Not a chain: build full structures for parallel scheduling.
+    remaining = {name: len(t.deps) for name, t in targets.items()}
+    dependents: dict[str, list[str]] = {name: [] for name in targets}
+    for name, target in targets.items():
+        for dep in target.deps:
+            dependents[dep.name].append(name)
+    roots = [name for name, count in remaining.items() if count == 0]
 
     # Match the eval server's core count. Slight oversubscription on smaller
     # machines is fine — CPU-bound tasks queue up cleanly under free-threading.
