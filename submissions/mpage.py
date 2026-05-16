@@ -83,13 +83,10 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                     queue_not_empty.notify_all()
                 return
 
-    threads = []
     for _ in range(NUM_WORKERS):
-        t = threading.Thread(target=worker)
+        t = threading.Thread(target=worker, daemon=True)
         t.start()
-        threads.append(t)
 
-    for t in threads:
-        t.join()
+    worker()
 
     return results
