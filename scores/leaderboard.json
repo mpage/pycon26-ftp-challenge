@@ -1,7 +1,19 @@
 {
-  "last_updated": "2026-05-16T22:13:50.141661+00:00",
-  "baseline_time": 41.226052417070605,
+  "last_updated": "2026-05-16T22:16:25.459640+00:00",
+  "baseline_time": 40.46776702592615,
   "entries": [
+    {
+      "username": "jbower-fb",
+      "display_name": "jbower-fb",
+      "median_time_seconds": 6.6723011310677975,
+      "speedup": "6.07",
+      "status": "valid",
+      "merged_at": "2026-05-16T22:16:17+00:00",
+      "num_runs": 1,
+      "pr_number": 37,
+      "pr_url": "https://github.com/mpage/pycon26-ftp-challenge/pull/37",
+      "is_meta": true
+    },
     {
       "username": "kddnewton",
       "display_name": "kddnewton",
