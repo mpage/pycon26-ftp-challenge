@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T21:19:58.904603+00:00",
+  "last_updated": "2026-05-16T21:29:52.704736+00:00",
   "baseline_time": 41.226052417070605,
   "entries": [
     {
@@ -73,6 +73,18 @@
       "pr_number": 26,
       "pr_url": "https://github.com/mpage/pycon26-ftp-challenge/pull/26",
       "is_meta": true
+    },
+    {
+      "username": "DeeptiTalesra",
+      "display_name": "DeeptiTalesra",
+      "median_time_seconds": 6.942278825095855,
+      "speedup": "5.93",
+      "status": "valid",
+      "merged_at": "2026-05-16T21:29:42+00:00",
+      "num_runs": 1,
+      "pr_number": 35,
+      "pr_url": "https://github.com/mpage/pycon26-ftp-challenge/pull/35",
+      "is_meta": false
     },
     {
       "username": "jonathan-d-zhang",
