@@ -81,9 +81,9 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     sched_cv = threading.Condition(sched_lock)
     remaining = [len(targets)]
 
-    for t in targets.values():
-        if t._rem_deps == 0:
-            ready.append(t)
+    initial = [t for t in targets.values() if t._rem_deps == 0]
+    initial.sort(key=lambda t: -t.work)
+    ready.extend(initial)
 
     def worker():
         cv = sched_cv
