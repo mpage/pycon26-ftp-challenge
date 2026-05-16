@@ -7,7 +7,7 @@ from threading import Thread
 
 from graph import BuildGraph, Target
 
-THREADS = 23
+THREADS = 24
 
 
 def _build_chains(
