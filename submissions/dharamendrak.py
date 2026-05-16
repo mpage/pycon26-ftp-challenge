@@ -93,19 +93,27 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                 )
                 results[name] = target.build(dep_results)
 
+                to_queue: list[str] = []
+                done_flag = False
                 with lock:
                     pending -= 1
                     if pending == 0:
-                        for _ in range(num_workers - 1):
-                            ready.put(None)
-                        return
-                    for child in dependents[name]:
-                        remaining[child] -= 1
-                        if remaining[child] == 0:
-                            heapq.heappush(heap, (-targets[child].work, child))
-                    while heap:
-                        _, n = heapq.heappop(heap)
-                        ready.put(n)
+                        done_flag = True
+                    else:
+                        for child in dependents[name]:
+                            remaining[child] -= 1
+                            if remaining[child] == 0:
+                                heapq.heappush(heap, (-targets[child].work, child))
+                        while heap:
+                            _, n = heapq.heappop(heap)
+                            to_queue.append(n)
+
+                if done_flag:
+                    for _ in range(num_workers - 1):
+                        ready.put(None)
+                    return
+                for n in to_queue:
+                    ready.put(n)
     else:
         for name in roots:
             ready.put(name)
