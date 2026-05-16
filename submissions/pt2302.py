@@ -6,7 +6,7 @@ import threading
 from graph import BuildGraph
 
 
-MAX_WORKERS = 24
+MAX_WORKERS = 32
 
 
 def build_all(graph: BuildGraph) -> dict[str, bytes]:
@@ -57,44 +57,34 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     sentinel = None
     empty_deps: dict[str, bytes] = {}
 
-    def worker(
-        ready_get=ready.get,
-        ready_put=ready.put,
-        target_map=targets,
-        result_map=results,
-        child_map=dependents,
-        remain=remaining,
-        lock_obj=lock,
-        empty=empty_deps,
-    ) -> None:
+    def worker() -> None:
         nonlocal pending
 
         while True:
-            name = ready_get()
+            name = ready.get()
             if name is sentinel:
                 return
 
-            target = target_map[name]
+            target = targets[name]
             dep_results = (
-                {dep.name: result_map[dep.name] for dep in target.deps}
+                {dep.name: results[dep.name] for dep in target.deps}
                 if target.deps
-                else empty
+                else empty_deps
             )
-            result = target.build(dep_results)
+            results[name] = target.build(dep_results)
 
-            with lock_obj:
-                result_map[name] = result
+            with lock:
                 pending -= 1
 
                 if pending == 0:
-                    for _ in range(workers):
-                        ready_put(sentinel)
-                    continue
+                    for _ in range(workers - 1):
+                        ready.put(sentinel)
+                    return
 
-                for child in child_map[name]:
-                    remain[child] -= 1
-                    if remain[child] == 0:
-                        ready_put(child)
+                for child in dependents[name]:
+                    remaining[child] -= 1
+                    if remaining[child] == 0:
+                        ready.put(child)
 
     threads = [threading.Thread(target=worker) for _ in range(workers - 1)]
     for thread in threads:
