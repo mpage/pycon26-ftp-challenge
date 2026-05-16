@@ -40,22 +40,28 @@ def build_all(graph: BuildGraph):
                     if (name := ready.get()) is None:
                         return
 
-                    target = targets[name]
-                    results[name] = target.build({dep.name: results[dep.name] for dep in target.deps})
+                    while name is not None:
+                        target = targets[name]
+                        results[name] = target.build({dep.name: results[dep.name] for dep in target.deps})
 
-                    with lock:
-                        remaining -= 1
-                        if remaining == 0:
-                            for _ in range(NUM_WORKERS - 1):
-                                ready.put(None)
-                            return
-                        for dependent in dependents[name]:
-                            in_degree[dependent] -= 1
-                            if in_degree[dependent] == 0:
-                                heapq.heappush(heap, (-targets[dependent].work, dependent))
-                        while heap:
-                            _, ready_name = heapq.heappop(heap)
-                            ready.put(ready_name)
+                        next_name = None
+                        with lock:
+                            remaining -= 1
+                            if remaining == 0:
+                                for _ in range(NUM_WORKERS - 1):
+                                    ready.put(None)
+                                return
+                            for dependent in dependents[name]:
+                                in_degree[dependent] -= 1
+                                if in_degree[dependent] == 0:
+                                    heapq.heappush(heap, (-targets[dependent].work, dependent))
+                            if len(heap) == 1:
+                                _, next_name = heapq.heappop(heap)
+                            else:
+                                while heap:
+                                    _, ready_name = heapq.heappop(heap)
+                                    ready.put(ready_name)
+                        name = next_name
         else:
             def worker():
                 nonlocal remaining
