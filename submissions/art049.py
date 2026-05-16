@@ -37,8 +37,6 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     for t in targets.values():
         t._rem_deps = len(t.deps)
         t._dependents = []
-        t._dep_objs = t.deps
-        t._my_result = None
         if t._rem_deps > 1:
             any_high_indeg = True
 
@@ -57,7 +55,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         q = deque(t for t in targets.values() if t._rem_deps == 0)
         while q:
             t = q.popleft()
-            dep_results = {d.name: results[d.name] for d in t._dep_objs}
+            dep_results = {d.name: results[d.name] for d in t.deps}
             results[t.name] = t.build(dep_results)
             for nxt in t._dependents:
                 nxt._rem_deps -= 1
@@ -95,7 +93,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                 target = ready.popleft()
 
             while target is not None:
-                dep_results = {d.name: d._my_result for d in target._dep_objs}
+                dep_results = {d.name: d._my_result for d in target.deps}
                 target._my_result = target.build(dep_results)
 
                 next_target = None
