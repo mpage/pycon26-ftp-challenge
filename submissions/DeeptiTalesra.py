@@ -6,7 +6,7 @@ import threading
 
 from graph import BuildGraph, Target
 
-NUM_WORKERS = 24
+NUM_WORKERS = 28
 
 
 def build_all(graph: BuildGraph) -> dict[str, bytes]:
@@ -62,9 +62,11 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         if len(dep_list) > 1:
             dep_list.sort(key=lambda t: cp_weight[t._idx], reverse=True)
 
+    _empty = {}
+
     if len(initial) == 1 and all(len(d) <= 1 for d in dependents):
         t = initial[0]
-        results[t._idx] = t.build({})
+        results[t._idx] = t.build(_empty)
         for _ in range(n - 1):
             child = dependents[t._idx][0]
             results[child._idx] = child.build(
@@ -91,6 +93,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         _acquire = lock.acquire
         _release = lock.release
         _nw = num_workers
+        _e = _empty
 
         while True:
             t = _get()
@@ -98,7 +101,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                 return
 
             while t is not None:
-                dep_results = {dep.name: _results[dep._idx] for dep in t.deps}
+                dep_results = _e if not t.deps else {dep.name: _results[dep._idx] for dep in t.deps}
                 result = t.build(dep_results)
 
                 inline = None
