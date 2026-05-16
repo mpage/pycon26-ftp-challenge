@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T18:34:05.900790+00:00",
+  "last_updated": "2026-05-16T18:39:48.679397+00:00",
   "baseline_time": 41.226052417070605,
   "entries": [
     {
@@ -61,6 +61,18 @@
       "pr_number": 26,
       "pr_url": "https://github.com/mpage/pycon26-ftp-challenge/pull/26",
       "is_meta": true
+    },
+    {
+      "username": "jonathan-d-zhang",
+      "display_name": "jonathan-d-zhang",
+      "median_time_seconds": 6.831937462091446,
+      "speedup": "5.92",
+      "status": "valid",
+      "merged_at": "2026-05-16T18:39:38+00:00",
+      "num_runs": 1,
+      "pr_number": 29,
+      "pr_url": "https://github.com/mpage/pycon26-ftp-challenge/pull/29",
+      "is_meta": false
     },
     {
       "username": "cho-minsung",
