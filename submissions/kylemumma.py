@@ -9,6 +9,8 @@ Rules:
 """
 from graph import BuildGraph, Target
 from concurrent.futures import Future, ThreadPoolExecutor, wait, FIRST_COMPLETED
+from queue import SimpleQueue
+from threading import Lock
 
 def build_all(graph: BuildGraph) -> dict[str, bytes]:
     """Build all targets in the graph, respecting dependency order.
@@ -22,7 +24,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     # TODO: implement your build scheduler here
     # future_to_node = {}
     visited: set[str] = set()
-    todo: list[tuple[Target, dict]] = []
+    todo: list[Target] = []
     dependents: dict[str, set[str]] = {}
     # name -> (waiting_on, results)
     dep_results: dict[str, tuple[int, dict[str, bytes]]] = {}
@@ -31,33 +33,48 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         if name not in visited:
             dfs(target, visited, dependents, todo, dep_results)
 
-    latest = ""
-    with ThreadPoolExecutor(max_workers=24) as executor:
-        # e[0] is the target
-        future_to_node: dict[Future[bytes], str] = {}
-        pending = set()
-        for target_and_dep_res in todo:
-            future = executor.submit(target_and_dep_res[0].build, target_and_dep_res[1])
-            future_to_node[future] = target_and_dep_res[0].name
-            pending.add(future)
-        while pending:
-            done, pending = wait(pending, return_when=FIRST_COMPLETED)
-            for future in done:
-                name = future_to_node[future]
-                latest = name
-                res = future.result()
-                dependant = dependents.get(name, [])
-                for child in dependant:
-                    dep_results[child][1][name] = res
-                    dep_results[child] = (dep_results[child][0]-1, dep_results[child][1])
-                    if dep_results[child][0] == 0:
-                        target=graph.targets[child]
-                        new_future = executor.submit(target.build, dep_results[child][1])
-                        future_to_node[new_future] = target.name
-                        pending.add(new_future)
-    return dep_results[latest][1]
+    # find the # of roots
+    root_cnt = len(graph.targets) - len(dependents)
 
-def dfs(node: Target, visited: set[str], dependents: dict[str, set[str]], todo: list[tuple], dep_results: dict[str, tuple[int, dict[str, bytes]]]):
+    ready = SimpleQueue()
+    lock = Lock()
+    for e in todo:
+        ready.put(e)
+
+    def worker(target: Target):
+        nonlocal root_cnt
+        # build
+        arg = dep_results[target.name][1] if target.name in dep_results else {}
+        res = target.build(arg)
+
+        # update state
+        lock.acquire()
+        if target.name not in dependents:
+            # no dependers (in_deg), this is the root
+            root_cnt -= 1
+            if root_cnt == 0:
+                ready.put((None, target.name))
+            lock.release()
+            return
+        for d in dependents.get(target.name, []):
+            dep_results[d][1][target.name] = res
+            dep_results[d] = (dep_results[d][0]-1, dep_results[d][1])
+            if dep_results[d][0] == 0:
+                ready.put(graph.targets[d])
+        lock.release()
+    
+    with ThreadPoolExecutor(max_workers=24) as executor:
+        while True:
+            # submit new work
+            target = ready.get()
+            if isinstance(target, tuple):
+                assert target[0] is None
+                return dep_results[target[1]][1]
+            executor.submit(worker, target)
+
+    return None
+
+def dfs(node: Target, visited: set[str], dependents: dict[str, set[str]], todo: list[Target], dep_results: dict[str, tuple[int, dict[str, bytes]]]):
     if node.name in visited:
         return
     visited.add(node.name)
@@ -69,5 +86,5 @@ def dfs(node: Target, visited: set[str], dependents: dict[str, set[str]], todo: 
         dependents[child.name].add(node.name)
         dfs(child, visited, dependents, todo, dep_results)
     if len(node.deps) == 0:
-        todo.append((node, {}))
+        todo.append(node)
 
