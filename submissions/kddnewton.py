@@ -1,4 +1,5 @@
 import _thread
+import gc
 import queue
 import threading
 
@@ -8,6 +9,7 @@ NUM_WORKERS = 24
 
 
 def build_all(graph: BuildGraph):
+    gc.disable()
     targets = graph.targets
     remaining = len(targets)
     ready = queue.SimpleQueue()
