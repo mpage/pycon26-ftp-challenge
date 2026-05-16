@@ -1,7 +1,6 @@
-"""Parallel build scheduler with source-data precomputation and inline chaining.
+"""Parallel build scheduler with inline chaining.
 
-Key optimizations over typical solutions:
-- Precomputes all source data in parallel, eliminating ~15% RNG cost per build
+Key optimizations:
 - Inline chaining: first ready dependent executes without a queue round-trip
 - SimpleQueue (C-implemented) for work distribution
 - Root sorting by descending work for critical path scheduling
@@ -37,96 +36,71 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     num_workers = min(NUM_WORKERS, os.cpu_count() or 4)
     results: dict[str, bytes] = {}
 
-    # Phase 1: Precompute source data in parallel (saves ~15% RNG cost per build)
-    original_make = Target._make_source_data
-    source_cache: dict[str, bytes] = {}
+    # Chain fast-path: skip threading overhead for linear graphs
+    if len(initial) == 1 and all(len(d) <= 1 for d in dependents.values()):
+        name = initial[0]
+        results[name] = targets[name].build({})
+        for _ in range(n - 1):
+            child = dependents[name][0]
+            target = targets[child]
+            results[child] = target.build(
+                {dep.name: results[dep.name] for dep in target.deps}
+            )
+            name = child
+        return results
 
-    def precompute_chunk(chunk):
-        for t in chunk:
-            source_cache[t.name] = original_make(t)
+    # Parallel build scheduling
+    initial.sort(key=lambda name: targets[name].work, reverse=True)
 
-    target_list = list(targets.values())
-    chunk_size = max(1, (n + num_workers - 1) // num_workers)
-    pc_threads = []
-    for i in range(0, n, chunk_size):
-        t = threading.Thread(
-            target=precompute_chunk, args=(target_list[i : i + chunk_size],)
-        )
-        t.start()
-        pc_threads.append(t)
-    for t in pc_threads:
-        t.join()
+    q: queue.SimpleQueue = queue.SimpleQueue()
+    for name in initial:
+        q.put(name)
 
-    Target._make_source_data = lambda self: source_cache[self.name]
+    lock = threading.Lock()
+    completed = 0
 
-    try:
-        # Chain fast-path: zero scheduling overhead, benefits from cached source data
-        if len(initial) == 1 and all(len(d) <= 1 for d in dependents.values()):
-            name = initial[0]
-            results[name] = targets[name].build({})
-            for _ in range(n - 1):
-                child = dependents[name][0]
-                target = targets[child]
-                results[child] = target.build(
+    def worker():
+        nonlocal completed
+        _get = q.get
+        _put = q.put
+
+        while True:
+            name = _get()
+            if name is None:
+                return
+
+            while name is not None:
+                target = targets[name]
+                result = target.build(
                     {dep.name: results[dep.name] for dep in target.deps}
                 )
-                name = child
-            return results
 
-        # Phase 2: Parallel build scheduling
-        initial.sort(key=lambda name: targets[name].work, reverse=True)
+                inline = None
+                with lock:
+                    results[name] = result
+                    completed += 1
+                    if completed == n:
+                        for _ in range(num_workers - 1):
+                            _put(None)
+                        return
+                    for child in dependents[name]:
+                        in_degree[child] -= 1
+                        if in_degree[child] == 0:
+                            if inline is None:
+                                inline = child
+                            else:
+                                _put(child)
+                name = inline
 
-        q: queue.SimpleQueue = queue.SimpleQueue()
-        for name in initial:
-            q.put(name)
+    threads = []
+    for _ in range(num_workers - 1):
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        threads.append(t)
 
-        lock = threading.Lock()
-        completed = 0
+    worker()
 
-        def worker():
-            nonlocal completed
-            _get = q.get
-            _put = q.put
+    for t in threads:
+        t.join()
 
-            while True:
-                name = _get()
-                if name is None:
-                    return
-
-                while name is not None:
-                    target = targets[name]
-                    result = target.build(
-                        {dep.name: results[dep.name] for dep in target.deps}
-                    )
-
-                    inline = None
-                    with lock:
-                        results[name] = result
-                        completed += 1
-                        if completed == n:
-                            for _ in range(num_workers - 1):
-                                _put(None)
-                            return
-                        for child in dependents[name]:
-                            in_degree[child] -= 1
-                            if in_degree[child] == 0:
-                                if inline is None:
-                                    inline = child
-                                else:
-                                    _put(child)
-                    name = inline
-
-        threads = []
-        for _ in range(num_workers - 1):
-            t = threading.Thread(target=worker, daemon=True)
-            t.start()
-            threads.append(t)
-
-        worker()
-
-        for t in threads:
-            t.join()
-
-        return results
-    finally:
-        Target._make_source_data = original_make
+    return results
