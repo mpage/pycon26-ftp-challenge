@@ -29,6 +29,12 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         for dep in t.deps:
             dependents[dep._idx].append(t)
 
+    # Pre-sort deps by name and precompute (name, idx) tuples.
+    # Avoids repeated attribute lookups in the hot loop, and build()'s
+    # internal sorted() sees already-sorted keys → O(n) instead of O(n log n).
+    for t in target_list:
+        t._dep_info = sorted((dep.name, dep._idx) for dep in t.deps)
+
     num_workers = min(NUM_WORKERS, os.cpu_count() or 4)
     results: list[bytes | None] = [None] * n
 
@@ -70,7 +76,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         for _ in range(n - 1):
             child = dependents[t._idx][0]
             results[child._idx] = child.build(
-                {dep.name: results[dep._idx] for dep in child.deps}
+                {name: results[idx] for name, idx in child._dep_info}
             )
             t = child
         return {target_list[i].name: results[i] for i in range(n)}
@@ -101,7 +107,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                 return
 
             while t is not None:
-                dep_results = _e if not t.deps else {dep.name: _results[dep._idx] for dep in t.deps}
+                dep_results = _e if not t._dep_info else {name: _results[idx] for name, idx in t._dep_info}
                 result = t.build(dep_results)
 
                 inline = None
