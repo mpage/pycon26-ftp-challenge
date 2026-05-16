@@ -1,6 +1,5 @@
 """Persistent-worker build scheduler for the PyCon free-threading challenge."""
 
-import os
 import queue
 import threading
 
@@ -35,12 +34,11 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         name = roots[0]
         while True:
             target = targets[name]
-            deps = target.deps
-            if deps:
-                dep = deps[0]
-                dep_results = {dep.name: results[dep.name]}
-            else:
-                dep_results = {}
+            dep_results = (
+                {dep.name: results[dep.name] for dep in target.deps}
+                if target.deps
+                else {}
+            )
             results[name] = target.build(dep_results)
 
             children = dependents[name]
@@ -55,42 +53,48 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     results: dict[str, bytes] = {}
     lock = threading.Lock()
     pending = total
-    workers = min(MAX_WORKERS, os.cpu_count() or 1, total)
+    workers = min(MAX_WORKERS, total)
     sentinel = None
     empty_deps: dict[str, bytes] = {}
 
-    def worker() -> None:
+    def worker(
+        ready_get=ready.get,
+        ready_put=ready.put,
+        target_map=targets,
+        result_map=results,
+        child_map=dependents,
+        remain=remaining,
+        lock_obj=lock,
+        empty=empty_deps,
+    ) -> None:
         nonlocal pending
 
         while True:
-            name = ready.get()
+            name = ready_get()
             if name is sentinel:
                 return
 
-            target = targets[name]
-            deps = target.deps
-            if not deps:
-                dep_results = empty_deps
-            elif len(deps) == 1:
-                dep = deps[0]
-                dep_results = {dep.name: results[dep.name]}
-            else:
-                dep_results = {dep.name: results[dep.name] for dep in deps}
+            target = target_map[name]
+            dep_results = (
+                {dep.name: result_map[dep.name] for dep in target.deps}
+                if target.deps
+                else empty
+            )
             result = target.build(dep_results)
 
-            with lock:
-                results[name] = result
+            with lock_obj:
+                result_map[name] = result
                 pending -= 1
 
                 if pending == 0:
                     for _ in range(workers):
-                        ready.put(sentinel)
+                        ready_put(sentinel)
                     continue
 
-                for child in dependents[name]:
-                    remaining[child] -= 1
-                    if remaining[child] == 0:
-                        ready.put(child)
+                for child in child_map[name]:
+                    remain[child] -= 1
+                    if remain[child] == 0:
+                        ready_put(child)
 
     threads = [threading.Thread(target=worker) for _ in range(workers - 1)]
     for thread in threads:
