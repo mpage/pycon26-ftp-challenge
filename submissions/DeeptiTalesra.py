@@ -6,7 +6,7 @@ import threading
 
 from graph import BuildGraph, Target
 
-NUM_WORKERS = 28
+NUM_WORKERS = 24
 
 
 def build_all(graph: BuildGraph) -> dict[str, bytes]:
