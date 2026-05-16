@@ -2,91 +2,114 @@
 
 import os
 import threading
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
+from queue import SimpleQueue
 
 from graph import BuildGraph, Target
 
 
 NUM_WORKERS = os.cpu_count() or 24
+_SENTINEL = None
 
-# Strategy:
-#
-# - SimpleQueue to feed workers
-# - Attempt to guess graph shape -> use different strategies?
-# - Do setup in parallel?
 
 def build_all(graph: BuildGraph) -> dict[str, bytes]:
-    results: dict[str, bytes] = {}
+    targets = graph.targets
+    num_targets = len(targets)
 
-    # Assign each target an id
-    idx_ctr = 0
-    for target in graph.targets.values():
-        target.index = idx_ctr
-        idx_ctr += 1
+    idx = 0
+    for target in targets.values():
+        target.index = idx
+        idx += 1
 
-    # Precompute reverse deps and in-degree
-    num_targets = len(graph.targets)
+    results: list[bytes | None] = [None] * num_targets
+
     dependents: list[list[Target]] = [[] for _ in range(num_targets)]
-    for name, target in graph.targets.items():
+    num_sources = 0
+    for target in targets.values():
         target.in_degree = len(target.deps)
+        if target.in_degree == 0:
+            num_sources += 1
         for dep in target.deps:
             dependents[dep.index].append(target)
 
-    # Track remaining count for completion signaling
-    remaining = len(graph.targets)
-    lock = threading.Lock()
-    done = threading.Event()
-    queue: deque[Target] = deque()
-    queue_not_empty = threading.Condition(lock)
+    max_fan_out = max((len(d) for d in dependents), default=0)
 
-    # Seed with zero-dependency targets
-    for target in graph.targets.values():
+    # Sort dependents heaviest-first for better load balancing
+    for dep_list in dependents:
+        if len(dep_list) > 1:
+            dep_list.sort(key=lambda t: t.work, reverse=True)
+
+    # Sequential fast path for chain-like graphs
+    if max_fan_out <= 1 and num_sources <= 1:
+        target = None
+        for t in targets.values():
+            if t.in_degree == 0:
+                target = t
+                break
+
+        while target is not None:
+            tidx = target.index
+            dep_results = {d.name: results[d.index] for d in target.deps}
+            results[tidx] = target.build(dep_results)
+            next_target = None
+            for dep in dependents[tidx]:
+                dep.in_degree -= 1
+                if dep.in_degree == 0:
+                    next_target = dep
+            target = next_target
+
+        return results
+
+    # Parallel path
+    remaining = num_targets
+    lock = threading.Lock()
+    queue: SimpleQueue[Target | None] = SimpleQueue()
+
+    for target in targets.values():
         if target.in_degree == 0:
-            queue.append(target)
+            queue.put(target)
 
     def worker():
         nonlocal remaining
-        while True:
-            with queue_not_empty:
-                while not queue and not done.is_set():
-                    queue_not_empty.wait()
-                if done.is_set() and not queue:
-                    return
-                target = queue.popleft()
+        _results = results
+        _dependents = dependents
+        _lock = lock
+        _queue = queue
+        _NW = NUM_WORKERS
 
-            target_index = target.index
-            dep_results = {d.name: results[d.index] for d in target.deps}
-            result = target.build(dep_results)
-            results[target_index] = result
+        target = _queue.get()
+        while target is not _SENTINEL:
+            tidx = target.index
+            dep_results = {d.name: _results[d.index] for d in target.deps}
+            _results[tidx] = target.build(dep_results)
 
-            newly_ready = []
-            with lock:
-                for dep in dependents[target_index]:
+            next_target = None
+            with _lock:
+                for dep in _dependents[tidx]:
                     dep.in_degree -= 1
                     if dep.in_degree == 0:
-                        newly_ready.append(dep)
+                        if next_target is None:
+                            next_target = dep
+                        else:
+                            _queue.put(dep)
                 remaining -= 1
                 if remaining == 0:
-                    done.set()
+                    for _ in range(_NW):
+                        _queue.put(_SENTINEL)
 
-            if newly_ready:
-                with queue_not_empty:
-                    queue.extend(newly_ready)
-                    if len(newly_ready) > 1:
-                        queue_not_empty.notify_all()
-                    else:
-                        queue_not_empty.notify()
+            if next_target is not None:
+                target = next_target
+            else:
+                target = _queue.get()
 
-            if done.is_set():
-                with queue_not_empty:
-                    queue_not_empty.notify_all()
-                return
-
-    for _ in range(NUM_WORKERS):
+    threads = []
+    for _ in range(NUM_WORKERS - 1):
         t = threading.Thread(target=worker, daemon=True)
         t.start()
+        threads.append(t)
 
     worker()
+
+    for t in threads:
+        t.join()
 
     return results
