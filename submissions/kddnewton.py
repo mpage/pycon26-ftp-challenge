@@ -1,5 +1,3 @@
-import _thread
-import gc
 import queue
 import threading
 
@@ -9,7 +7,6 @@ NUM_WORKERS = 24
 
 
 def build_all(graph: BuildGraph):
-    gc.disable()
     targets = graph.targets
     remaining = len(targets)
     ready = queue.SimpleQueue()
@@ -49,9 +46,12 @@ def build_all(graph: BuildGraph):
                         if in_degree[dependent] == 0:
                             ready.put(dependent)
 
-        handles = [_thread.start_joinable_thread(worker, daemon=True) for _ in range(NUM_WORKERS)]
-        for handle in handles:
-            handle.join()
+        threads = [threading.Thread(target=worker) for _ in range(NUM_WORKERS - 1)]
+        for t in threads:
+            t.start()
+        worker()
+        for t in threads:
+            t.join()
     else:
         name = ready.get()
         results[name] = targets[name].build({})
