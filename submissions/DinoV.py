@@ -10,9 +10,10 @@ Rules:
 
 from threading import Thread
 from graph import BuildGraph, Target
-from threading import Semaphore
 import ctypes
 import sys
+
+_DONE = object()
 
 NUM_WORKERS = 24
 
@@ -47,22 +48,29 @@ if sys.platform == 'darwin':
             return _atomic_dec(self._ref)
 
     class LockFreeQueue:
-        __slots__ = ('_data', '_flags', '_head', '_head_ref', '_tail', '_tail_ref')
+        __slots__ = ('_data', '_flags', '_head', '_head_ref', '_tail', '_tail_ref',
+                     '_count', '_count_ref')
 
         def __init__(self, capacity):
             self._data = [None] * capacity
             self._flags = (ctypes.c_int64 * capacity)()
             self._head = ctypes.c_int64(0)
             self._tail = ctypes.c_int64(0)
+            self._count = ctypes.c_int64(0)
             self._head_ref = ctypes.byref(self._head)
             self._tail_ref = ctypes.byref(self._tail)
+            self._count_ref = ctypes.byref(self._count)
 
         def push(self, item):
             idx = _os_atomic_add(1, self._tail_ref) - 1
             self._data[idx] = item
             self._flags[idx] = 1
+            _os_atomic_add(1, self._count_ref)
 
-        def pop(self):
+        def try_pop(self):
+            if _os_atomic_add(-1, self._count_ref) < 0:
+                _os_atomic_add(1, self._count_ref)
+                return None
             idx = _os_atomic_add(1, self._head_ref) - 1
             while self._flags[idx] == 0:
                 pass
@@ -94,22 +102,29 @@ else:
             return _atomic_fetch_sub(self._ref, 1, self._order)
 
     class LockFreeQueue:
-        __slots__ = ('_data', '_flags', '_head', '_head_ref', '_tail', '_tail_ref')
+        __slots__ = ('_data', '_flags', '_head', '_head_ref', '_tail', '_tail_ref',
+                     '_count', '_count_ref')
 
         def __init__(self, capacity):
             self._data = immortalize([None] * capacity)
             self._flags = immortalize((ctypes.c_int64 * capacity)())
             self._head = immortalize(ctypes.c_int64(0))
             self._tail = immortalize(ctypes.c_int64(0))
+            self._count = immortalize(ctypes.c_int64(0))
             self._head_ref = immortalize(ctypes.byref(self._head))
             self._tail_ref = immortalize(ctypes.byref(self._tail))
+            self._count_ref = immortalize(ctypes.byref(self._count))
 
         def push(self, item):
             idx = _atomic_fetch_add(self._tail_ref, 1, _RELAXED)
             self._data[idx] = item
             self._flags[idx] = 1
+            _atomic_fetch_add(self._count_ref, 1, _RELAXED)
 
-        def pop(self):
+        def try_pop(self):
+            if _atomic_fetch_sub(self._count_ref, 1, _RELAXED) <= 0:
+                _atomic_fetch_add(self._count_ref, 1, _RELAXED)
+                return None
             idx = _atomic_fetch_add(self._head_ref, 1, _RELAXED)
             while self._flags[idx] == 0:
                 pass
@@ -183,17 +198,16 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             pending[name] = immortalize(AtomicInt(len(target.deps)))
 
     ready = immortalize(LockFreeQueue(len(targets) + NUM_WORKERS))
-    sem = immortalize(Semaphore(0))
     for name in targets:
         if in_degree[name] == 0:
             ready.push(name)
-            sem.release()
 
-    def build_target() -> None:
+    def build_target(target, results) -> None:
         while True:
-            sem.acquire()
-            name = ready.pop()
+            name = ready.try_pop()
             if name is None:
+                continue
+            if name is _DONE:
                 return
             target = targets[name]
             if name in sorted_dep_names:
@@ -208,17 +222,15 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                 dep_results_for[child][name] = result
                 if pending[child].dec() is _REACHED_ZERO:
                     ready.push(child)
-                    sem.release()
 
             if remaining.dec() is _REACHED_ZERO:
                 for _ in range(NUM_WORKERS - 1):
-                    ready.push(None)
-                    sem.release()
+                    ready.push(_DONE)
                 return
 
     threads = []
     for i in range(NUM_WORKERS):
-        t = Thread(target=build_target)
+        t = Thread(target=build_target, args=(target, results))
         t.start()
         threads.append(t)
 
