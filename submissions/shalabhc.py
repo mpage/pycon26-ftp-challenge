@@ -19,24 +19,27 @@ def _build_chains(
         for dep in target.deps:
             dependents[dep.name].append(target)
 
-    def is_chain_continuation(target: Target) -> bool:
-        if len(target.deps) != 1:
-            return False
-        return len(dependents[target.deps[0].name]) == 1
+    # Precompute which targets are chain continuations
+    continuation = {
+        name for name, target in graph.targets.items()
+        if len(target.deps) == 1 and len(dependents[target.deps[0].name]) == 1
+    }
 
     chain_of: dict[str, tuple[Target, ...]] = {}
-    for start in graph.targets.values():
-        if is_chain_continuation(start):
+    for name, start in graph.targets.items():
+        if name in continuation:
             continue
         chain: list[Target] = [start]
         current = start
+        # Inside the loop, len(dependents[current.name]) == 1 guarantees
+        # the second condition of is_chain_continuation for nxt, so only
+        # check len(nxt.deps) == 1
         while len(dependents[current.name]) == 1:
             nxt = dependents[current.name][0]
-            if is_chain_continuation(nxt):
-                chain.append(nxt)
-                current = nxt
-            else:
+            if len(nxt.deps) != 1:
                 break
+            chain.append(nxt)
+            current = nxt
         t = tuple(chain)
         for target in chain:
             chain_of[target.name] = t
@@ -66,18 +69,20 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             item = work_queue.get()
             if item is None:
                 break
-            chain, inputs = item
-            dep_results = {dep.name: inp for dep, inp in zip(chain[0].deps, inputs)}
+            chain, dep_results = item
             result = chain[0].build(dep_results)
+            single_dep: dict[str, bytes] = {}
             for target in chain[1:]:
-                result = target.build({target.deps[0].name: result})
+                single_dep.clear()
+                single_dep[target.deps[0].name] = result
+                result = target.build(single_dep)
             built_queue.put((chain[-1].name, result))
 
     def scheduler() -> None:
         # Seed leaves — chains whose first target has no external deps
         for chain in chains:
             if chain_in_degree[chain[0].name] == 0:
-                work_queue.put((chain, ()))
+                work_queue.put((chain, {}))
 
         built = 0
         while built < len(chains):
@@ -88,8 +93,8 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                 dep_chain = chain_of[dependent.name]
                 chain_in_degree[dep_chain[0].name] -= 1
                 if chain_in_degree[dep_chain[0].name] == 0:
-                    inputs = tuple(results[d.name] for d in dep_chain[0].deps)
-                    work_queue.put((dep_chain, inputs))
+                    dep_results = {d.name: results[d.name] for d in dep_chain[0].deps}
+                    work_queue.put((dep_chain, dep_results))
 
         for _ in range(THREADS):
             work_queue.put(None)
