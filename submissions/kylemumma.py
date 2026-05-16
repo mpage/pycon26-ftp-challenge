@@ -8,13 +8,7 @@ Rules:
 - A target must not be built until all of its dependencies have completed.
 """
 from graph import BuildGraph, Target
-import pdb
 from concurrent.futures import Future, ThreadPoolExecutor, wait, FIRST_COMPLETED
-from logging import getLogger, DEBUG
-
-logger = getLogger(__name__)
-logger.disabled = True
-
 
 def build_all(graph: BuildGraph) -> dict[str, bytes]:
     """Build all targets in the graph, respecting dependency order.
@@ -38,10 +32,8 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             dfs(target, visited, dependents, todo, dep_results)
 
     latest = ""
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=24) as executor:
         # e[0] is the target
-        for e in todo:
-            logger.warning(f"submitting {e[0].name}")
         future_to_node: dict[Future[bytes], str] = {}
         pending = set()
         for target_and_dep_res in todo:
@@ -52,7 +44,6 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             done, pending = wait(pending, return_when=FIRST_COMPLETED)
             for future in done:
                 name = future_to_node[future]
-                logger.warning(f"done {name}")
                 latest = name
                 res = future.result()
                 dependant = dependents.get(name, [])
@@ -61,10 +52,6 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                     dep_results[child] = (dep_results[child][0]-1, dep_results[child][1])
                     if dep_results[child][0] == 0:
                         target=graph.targets[child]
-                        #dep_results = {}
-                        #for d in target.deps:
-                        #    dep_results[d.name] = results[d.name]
-                        logger.warning(f"submitting {target.name} with {dep_results[child][1]}")
                         new_future = executor.submit(target.build, dep_results[child][1])
                         future_to_node[new_future] = target.name
                         pending.add(new_future)
