@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-16T22:23:34.870878+00:00",
+  "last_updated": "2026-05-16T22:28:27.361311+00:00",
   "baseline_time": 40.46776702592615,
   "entries": [
     {
@@ -132,6 +132,18 @@
       "num_runs": 2,
       "pr_number": 34,
       "pr_url": "https://github.com/mpage/pycon26-ftp-challenge/pull/34",
+      "is_meta": false
+    },
+    {
+      "username": "art049",
+      "display_name": "art049",
+      "median_time_seconds": 6.921082362881862,
+      "speedup": "5.78",
+      "status": "valid",
+      "merged_at": "2026-05-16T22:28:18+00:00",
+      "num_runs": 1,
+      "pr_number": 38,
+      "pr_url": "https://github.com/mpage/pycon26-ftp-challenge/pull/38",
       "is_meta": false
     },
     {
