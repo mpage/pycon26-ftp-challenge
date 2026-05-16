@@ -6,7 +6,7 @@ import threading
 
 from graph import BuildGraph, Target
 
-NUM_WORKERS = 24
+NUM_WORKERS = 24  # match eval machine core count
 
 
 def build_all(graph: BuildGraph) -> dict[str, bytes]:
