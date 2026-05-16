@@ -1,19 +1,25 @@
 """Free-threaded build scheduler.
 
 Strategy:
-- 24 long-lived worker threads.
-- Per-target state on Target instances (`_my_result`, `_rem_deps`,
-  `_dependents`, `_dep_objs`, `_dec_lock`).
-- Lock-free dep decrement for low-in-degree targets (in-deg ≤ 1 can't
-  race). High-in-degree targets share a 64-lock shard pool.
-- Lock-free deque popleft via best-effort attempt; fall back to
-  Condition.wait only when the queue is genuinely empty.
-- Separate `done_lock` for the remaining counter so the sched_cv is
-  only acquired when we actually need to wake or be woken — most
-  tasks do 0 cv acquires.
-- Inline next-task fast path on the heaviest newly-ready successor.
-- LPT ordering of dependents (descending by work).
-- Sequential fast-path for chain-like graphs.
+- 24 long-lived worker threads. Free-threaded Python 3.14t removes the
+  GIL, so CPU-bound Target.build() calls actually run in parallel.
+- Per-target state stored as Target instance attributes (`_my_result`,
+  `_rem_deps`, `_dependents`, `_dep_objs`). No shared scheduling dicts:
+  in FT mode each shared dict carries a per-object mutex, and a single
+  hot one becomes the bottleneck.
+- A single sched_lock + Condition guards the ready deque, the dep
+  counters, and the remaining counter. Critical section per task is
+  just: dec deps, push extras (if any), dec remaining, notify.
+- Inline next-task fast path: the first newly-ready successor (the
+  heaviest under LPT ordering) stays on the same thread. Saves a
+  cv-wait+wakeup pair per chain step.
+- LPT ordering: dependents are pre-sorted by work descending so the
+  current worker picks the heaviest as its inline next and other
+  workers pop heaviest-first from the deque. Reduces makespan on wide
+  fanouts (e.g. diamond's expand levels). Skip the sort for trivial
+  lists so tree-shaped graphs don't pay it.
+- Sequential fast-path: chain-like graphs (in-deg ≤ 1 AND fan-out ≤ 1)
+  skip thread spawn entirely and run on the calling thread.
 """
 
 from __future__ import annotations
@@ -25,23 +31,16 @@ from graph import BuildGraph
 
 
 NUM_WORKERS = 24
-SHARD_COUNT = 64
-_SHARD_MASK = SHARD_COUNT - 1
 
 
 def build_all(graph: BuildGraph) -> dict[str, bytes]:
     targets = graph.targets
-
-    shard_locks = [threading.Lock() for _ in range(SHARD_COUNT)]
 
     for t in targets.values():
         t._rem_deps = len(t.deps)
         t._dependents = []
         t._dep_objs = tuple(t.deps)
         t._my_result = None
-        t._dec_lock = (
-            shard_locks[id(t) & _SHARD_MASK] if t._rem_deps > 1 else None
-        )
     for t in targets.values():
         for dep in t.deps:
             dep._dependents.append(t)
@@ -57,6 +56,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
         if len(t._dep_objs) > max_indeg:
             max_indeg = len(t._dep_objs)
 
+    # Chain-like: walk topologically on the calling thread.
     if max_fanout <= 1 and max_indeg <= 1:
         results: dict[str, bytes] = {}
         q = deque(t for t in targets.values() if t._rem_deps == 0)
@@ -73,9 +73,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     ready: deque = deque()
     sched_lock = threading.Lock()
     sched_cv = threading.Condition(sched_lock)
-    done_lock = threading.Lock()
     remaining = [len(targets)]
-    all_done = threading.Event()
 
     initial = [t for t in targets.values() if t._rem_deps == 0]
     initial.sort(key=lambda t: -t.work)
@@ -84,66 +82,37 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     def worker():
         cv = sched_cv
         while True:
-            target = None
-            # Lock-free best-effort pop. deque.popleft is atomic in CPython.
-            try:
-                target = ready.popleft()
-            except IndexError:
-                pass
-
-            if target is None:
-                if all_done.is_set():
+            with cv:
+                while not ready and remaining[0] > 0:
+                    cv.wait()
+                if remaining[0] == 0:
+                    cv.notify_all()
                     return
-                with cv:
-                    while not ready and not all_done.is_set():
-                        cv.wait()
-                    if all_done.is_set():
-                        return
-                    try:
-                        target = ready.popleft()
-                    except IndexError:
-                        continue
+                target = ready.popleft()
 
             while target is not None:
                 dep_results = {d.name: d._my_result for d in target._dep_objs}
                 target._my_result = target.build(dep_results)
 
-                extras = []
-                for dep in target._dependents:
-                    dl = dep._dec_lock
-                    if dl is None:
+                next_target = None
+                extras_count = 0
+                with cv:
+                    for dep in target._dependents:
                         dep._rem_deps -= 1
                         if dep._rem_deps == 0:
-                            extras.append(dep)
-                    else:
-                        with dl:
-                            dep._rem_deps -= 1
-                            ready_now = dep._rem_deps == 0
-                        if ready_now:
-                            extras.append(dep)
-
-                next_target = None
-                if extras:
-                    next_target = extras[0]  # LPT: heaviest
-                    if len(extras) > 1:
-                        # deque.extend is atomic; signal waiters separately.
-                        ready.extend(extras[1:])
-                        rest = len(extras) - 1
-                        with cv:
-                            if rest >= 4:
-                                cv.notify_all()
+                            if next_target is None:
+                                next_target = dep
                             else:
-                                for _ in range(rest):
-                                    cv.notify()
-
-                with done_lock:
-                    remaining[0] -= 1
-                    done_now = remaining[0] == 0
-                if done_now:
-                    all_done.set()
-                    with cv:
+                                ready.append(dep)
+                                extras_count += 1
+                    if extras_count >= 4:
                         cv.notify_all()
-
+                    elif extras_count:
+                        for _ in range(extras_count):
+                            cv.notify()
+                    remaining[0] -= 1
+                    if remaining[0] == 0:
+                        cv.notify_all()
                 target = next_target
 
     threads = [threading.Thread(target=worker) for _ in range(NUM_WORKERS)]
