@@ -1,144 +1,127 @@
-import ctypes
-import heapq
-import queue
-import threading
+from queue import SimpleQueue
+from threading import Condition, Event, Lock, Thread
 
 from graph import BuildGraph
 
 
-class _Remaining:
-    __slots__ = ("value",)
+class _BuildGraphState:
+    __slots__ = ("remaining", "done", "queue")
 
-    def __init__(self):
-        self.value = 0
+    def __init__(self, remaining, done, queue):
+        self.remaining = remaining
+        self.done = done
+        self.queue = queue
 
 
-_NUM_WORKERS = 24
-
-_parallel_ready = queue.SimpleQueue()
-_diamond_ready = queue.SimpleQueue()
-_lock = threading.Lock()
-_done = threading.Event()
+_NWORKERS = 24
+_lock = Lock()
+_condition = Condition()
 _results = [None] * 20000
-_remaining = _Remaining()
+
+_current_state = None
+_current_state_id = 0
 
 
-def _immortalize(obj):
-    ctypes.c_uint32.from_address(id(obj) + 12).value = 0xFFFFFFFF
-
-
-def _parallel_worker():
-    remaining = _remaining
+def _worker(condition, lock, results):
+    state_id = 0
 
     while True:
-        target = _parallel_ready.get()
+        with condition:
+            while state_id == _current_state_id:
+                condition.wait()
+            state_id = _current_state_id
+            state = _current_state
 
-        _results[target._id] = target.build(
-            {dep.name: _results[dep._id] for dep in target.deps}
-        )
-
-        with _lock:
-            if remaining.value == 1:
-                _done.set()
-                continue
-
-            remaining.value -= 1
-            for dependent in target._dependents:
-                if dependent._in_degree == 1:
-                    _parallel_ready.put(dependent)
-                else:
-                    dependent._in_degree -= 1
-
-
-def _diamond_worker():
-    heap = []
-    remaining = _remaining
-
-    while True:
-        target = _diamond_ready.get()
+        queue = state.queue
+        target = queue.get()
+        completed = False
 
         while target is not None:
-            _results[target._id] = target.build(
-                {dep.name: _results[dep._id] for dep in target.deps}
+            results[target._id] = target.build(
+                {dep.name: results[dep._id] for dep in target.deps}
             )
 
             next_target = None
-            with _lock:
-                if remaining.value == 1:
-                    _done.set()
+            ready = []
+
+            with lock:
+                if state.remaining == 1:
+                    state.done.set()
+                    completed = True
                     break
 
-                remaining.value -= 1
+                state.remaining -= 1
                 for dependent in target._dependents:
                     if dependent._in_degree == 1:
-                        heapq.heappush(
-                            heap, (-dependent.work, dependent._id, dependent)
-                        )
+                        if next_target is None:
+                            next_target = dependent
+                        else:
+                            ready.append(dependent)
                     else:
                         dependent._in_degree -= 1
 
-                if len(heap) == 1:
-                    next_target = heapq.heappop(heap)[2]
-                else:
-                    while heap:
-                        _diamond_ready.put(heapq.heappop(heap)[2])
-            target = next_target
+            for dependent in ready:
+                queue.put(dependent)
+
+            if next_target is not None:
+                target = next_target
+            else:
+                target = queue.get()
+
+        if completed:
+            for _ in range(_NWORKERS):
+                queue.put(None)
 
 
-_immortalize(_parallel_ready)
-_immortalize(_diamond_ready)
-_immortalize(_lock)
-_immortalize(_results)
-_immortalize(_done)
-_immortalize(_remaining)
-
-for _ in range(_NUM_WORKERS):
-    threading.Thread(target=_parallel_worker, daemon=True).start()
-    threading.Thread(target=_diamond_worker, daemon=True).start()
+for _ in range(_NWORKERS):
+    Thread(target=_worker, args=(_condition, _lock, _results), daemon=True).start()
 
 
 def build_all(graph: BuildGraph):
-    targets = graph.targets
+    global _current_state_id, _current_state
+
+    state = _BuildGraphState(
+        len(targets := graph.targets),
+        done := Event(),
+        queue := SimpleQueue(),
+    )
 
     for target in targets.values():
         target._dependents = []
 
-    roots = []
+    has_parallelism = False
     for id, target in enumerate(targets.values()):
         target._id = id
         if deps := target.deps:
-            deps.sort(key=lambda dep: dep.name)
             target._in_degree = len(deps)
             for dep in deps:
+                if not has_parallelism and dep._dependents:
+                    has_parallelism = True
                 dep._dependents.append(target)
         else:
             target._in_degree = 0
-            roots.append(target)
+            if not has_parallelism and not queue.empty():
+                has_parallelism = True
+            queue.put(target)
 
-    if len(roots) == 1 and all(
-        len(target._dependents) <= 1 for target in targets.values()
-    ):
-        target = roots[0]
-        results = _results
-        results[target._id] = target.build({})
+    if not has_parallelism:
+        target = queue.get()
+        (results := _results)[target._id] = target.build({})
 
         for _ in range(len(targets) - 1):
             dependent = target._dependents[0]
             results[dependent._id] = dependent.build({target.name: results[target._id]})
             target = dependent
     else:
-        ready = (
-            _diamond_ready
-            if (
-                max(target._in_degree for target in targets.values()) > _NUM_WORKERS
-                and max(len(target._dependents) for target in targets.values())
-                > _NUM_WORKERS
-            )
-            else _parallel_ready
-        )
+        for target in targets.values():
+            if len(target._dependents) > 1:
+                target._dependents.sort(
+                    key=lambda dependent: dependent.work, reverse=True
+                )
 
-        _remaining.value = len(targets)
-        _done.clear()
-        for target in roots:
-            ready.put(target)
-        _done.wait()
+        with _condition:
+            _current_state = state
+            _current_state_id += 1
+            _condition.notify_all()
+
+        done.wait()
