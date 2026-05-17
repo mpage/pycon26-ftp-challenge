@@ -83,6 +83,23 @@ _exec_page = _setup_atomics()
 
 
 # ---------------------------------------------------------------------------
+# Persistent thread pool
+# ---------------------------------------------------------------------------
+
+_task_queue: SimpleQueue = SimpleQueue()
+
+def _pool_worker():
+    _queue = _task_queue
+    while True:
+        fn = _queue.get()
+        fn()
+
+for _ in range(NUM_WORKERS - 1):
+    _t = threading.Thread(target=_pool_worker, daemon=True)
+    _t.start()
+
+
+# ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
 
@@ -136,6 +153,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
     # Parallel path — lock-free using atomic fetch_sub
     remaining = AtomicInt(num_targets)
     queue: SimpleQueue[Target | None] = SimpleQueue()
+    done = threading.Event()
 
     for target in targets.values():
         if target.in_degree.value == 0:
@@ -165,6 +183,7 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
             if _remaining.fetch_sub():
                 for _ in range(_NW):
                     _queue.put(_SENTINEL)
+                done.set()
 
             if next_target is not None:
                 target = next_target
@@ -172,9 +191,9 @@ def build_all(graph: BuildGraph) -> dict[str, bytes]:
                 target = _queue.get()
 
     for _ in range(NUM_WORKERS - 1):
-        t = threading.Thread(target=worker, daemon=True)
-        t.start()
+        _task_queue.put(worker)
 
     worker()
+    done.wait()
 
     return results
