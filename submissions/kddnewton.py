@@ -41,7 +41,6 @@ def _worker(condition, lock, results):
                 {dep.name: results[dep._id] for dep in target.deps}
             )
 
-            next_target = None
             ready = []
 
             with lock:
@@ -53,18 +52,16 @@ def _worker(condition, lock, results):
                 state.remaining -= 1
                 for dependent in target._dependents:
                     if dependent._in_degree == 1:
-                        if next_target is None:
-                            next_target = dependent
-                        else:
-                            ready.append(dependent)
+                        ready.append(dependent)
                     else:
                         dependent._in_degree -= 1
 
-            for dependent in ready:
-                queue.put(dependent)
-
-            if next_target is not None:
-                target = next_target
+            if ready:
+                if len(ready) >= _NWORKERS:
+                    ready.sort(key=lambda d: d.work)
+                target = ready.pop()
+                for dependent in reversed(ready):
+                    queue.put(dependent)
             else:
                 target = queue.get()
 
@@ -113,12 +110,6 @@ def build_all(graph: BuildGraph):
             results[dependent._id] = dependent.build({target.name: results[target._id]})
             target = dependent
     else:
-        for target in targets.values():
-            if len(target._dependents) > 1:
-                target._dependents.sort(
-                    key=lambda dependent: dependent.work, reverse=True
-                )
-
         with _condition:
             _current_state = state
             _current_state_id += 1
